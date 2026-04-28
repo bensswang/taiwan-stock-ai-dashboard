@@ -9,6 +9,9 @@ const TWSE_HISTORY = "https://www.twse.com.tw/exchangeReport/STOCK_DAY";
 
 // TPEx official OpenAPI. This endpoint is commonly used as a broad OTC stock list.
 const TPEX_MAINBOARD_PERATIO = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis";
+const STOCK_MASTER_CACHE_MS = 12 * 60 * 60 * 1000;
+
+let stockMasterCache: { expiresAt: number; data: StockMaster[] } | null = null;
 
 async function fetchJson<T>(url: string, revalidate = 300): Promise<T> {
   const res = await fetch(url, {
@@ -182,6 +185,9 @@ export async function getTpexMainboardStocks(): Promise<StockMaster[]> {
 }
 
 export async function getAllStockMaster(): Promise<StockMaster[]> {
+  const now = Date.now();
+  if (stockMasterCache && stockMasterCache.expiresAt > now) return stockMasterCache.data;
+
   const [listed, twseDaily, tpex] = await Promise.allSettled([
     getTwseListedStocks(),
     getTwseDailySecuritiesMaster(),
@@ -192,8 +198,9 @@ export async function getAllStockMaster(): Promise<StockMaster[]> {
   if (twseDaily.status === "fulfilled") groups.push(twseDaily.value);
   if (tpex.status === "fulfilled") groups.push(tpex.value);
 
-  const merged = mergeStockMasters(...groups, MANUAL_ETFS);
-  return mustHaveRows(merged, "all stock master");
+  const merged = mustHaveRows(mergeStockMasters(...groups, MANUAL_ETFS), "all stock master");
+  stockMasterCache = { expiresAt: now + STOCK_MASTER_CACHE_MS, data: merged };
+  return merged;
 }
 
 export async function searchAllStockMaster(q: string, limit = 50): Promise<StockMaster[]> {

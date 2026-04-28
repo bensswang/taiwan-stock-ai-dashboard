@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { AiAnalysis, NewsItem, PricePoint, Quote, StockMaster } from "@/lib/types";
@@ -212,6 +212,64 @@ function quoteDisplayName(quote: Quote) {
 
 function quoteMoveLabel(quote: Quote) {
   return `${quoteDisplayName(quote)}　${formatPctValue(quote.changePct)}`;
+}
+
+function normalizeSearchText(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, "");
+}
+
+function quoteToStockMaster(quote: Quote): StockMaster {
+  return {
+    code: quote.code,
+    name: quote.name || quote.code,
+    shortName: quote.name || quote.code,
+    market: quote.market,
+    industry: quote.industry,
+    aliases: []
+  };
+}
+
+function stockMatches(stock: StockMaster, query: string) {
+  const haystack = [stock.code, stock.name, stock.shortName, stock.market, stock.industry, ...(stock.aliases || [])]
+    .filter((item): item is string => Boolean(item))
+    .map(normalizeSearchText)
+    .join(" ");
+  return haystack.includes(query);
+}
+
+function scoreStock(stock: StockMaster, query: string) {
+  const code = normalizeSearchText(stock.code);
+  const name = normalizeSearchText(stock.name);
+  const shortName = normalizeSearchText(stock.shortName || "");
+  if (code === query) return 0;
+  if (code.startsWith(query)) return 1;
+  if (shortName === query || name === query) return 2;
+  if (shortName.startsWith(query) || name.startsWith(query)) return 3;
+  if (code.includes(query)) return 4;
+  return 5;
+}
+
+function localSearchStocks(value: string, quoteList: Quote[], limit = 12): StockMaster[] {
+  const query = normalizeSearchText(value);
+  if (!query) return [];
+  const byCode = new Map<string, StockMaster>();
+  for (const quote of quoteList) {
+    if (!quote.code) continue;
+    const stock = quoteToStockMaster(quote);
+    if (stockMatches(stock, query)) byCode.set(stock.code, stock);
+  }
+  return Array.from(byCode.values())
+    .sort((a, b) => scoreStock(a, query) - scoreStock(b, query) || a.code.localeCompare(b.code))
+    .slice(0, limit);
+}
+
+function mergeStockResults(primary: StockMaster[], secondary: StockMaster[], limit = 12) {
+  const map = new Map<string, StockMaster>();
+  for (const item of [...primary, ...secondary]) {
+    if (!item?.code || map.has(item.code)) continue;
+    map.set(item.code, item);
+  }
+  return Array.from(map.values()).slice(0, limit);
 }
 
 function moveColorClass(value?: number | null) {
@@ -562,6 +620,8 @@ export default function HomePage() {
   const [watchlistDigest, setWatchlistDigest] = useState<WatchlistDigest>(fallbackWatchlistDigest);
   const [watchlistDigestLoading, setWatchlistDigestLoading] = useState(false);
   const [lastWatchlistDigestCheck, setLastWatchlistDigestCheck] = useState<string>("");
+  const searchTimerRef = useRef<number | null>(null);
+  const searchSeqRef = useRef(0);
 
   const isDark = theme === "dark";
   const panel = isDark ? "border-white/10 bg-slate-900/85" : "border-slate-200 bg-white";
@@ -664,17 +724,36 @@ export default function HomePage() {
 
   async function searchStocks(value: string) {
     setQuery(value);
-    if (!value.trim()) {
+    const trimmed = value.trim();
+    searchSeqRef.current += 1;
+    const currentSeq = searchSeqRef.current;
+
+    if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current);
+
+    if (!trimmed) {
       setSearchResults([]);
       return;
     }
-    try {
-      const res = await fetch(`/api/stocks/search?q=${encodeURIComponent(value)}&limit=12`);
-      const json = await res.json();
-      setSearchResults(json.data || []);
-    } catch {
-      setSearchResults([]);
-    }
+
+    // 先用已載入的行情清單在瀏覽器端搜尋，輸入後幾乎立即顯示結果。
+    const localResults = localSearchStocks(trimmed, quotes, 12);
+    setSearchResults(localResults);
+
+    const exactLocalMatch = localResults.some((stock) => normalizeSearchText(stock.code) === normalizeSearchText(trimmed));
+    if (localResults.length >= 8 || exactLocalMatch) return;
+
+    // 若本機清單不足，再延遲查完整主檔，避免每打一個字都打 API。
+    searchTimerRef.current = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/stocks/search?q=${encodeURIComponent(trimmed)}&limit=12`);
+        const json = await res.json();
+        if (currentSeq !== searchSeqRef.current) return;
+        const remoteResults = Array.isArray(json.data) ? json.data : [];
+        setSearchResults(mergeStockResults(localResults, remoteResults, 12));
+      } catch {
+        if (currentSeq === searchSeqRef.current && !localResults.length) setSearchResults([]);
+      }
+    }, 300);
   }
 
   async function analyzeNews() {
@@ -752,6 +831,18 @@ export default function HomePage() {
       return next;
     });
   }
+
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!query.trim()) return;
+    setSearchResults(localSearchStocks(query, quotes, 12));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quotes]);
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("tw-stock-theme") as Theme | null;
