@@ -85,6 +85,25 @@ function numText(value: number | null | undefined, digits = 2) {
   return value.toLocaleString("zh-TW", { maximumFractionDigits: digits });
 }
 
+function cleanNewsTitle(item: NewsItem) {
+  const source = item.source?.trim();
+  const sourcePattern = source ? source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "";
+  return item.title
+    .replace(/\s+/g, " ")
+    .replace(sourcePattern ? new RegExp(`\\s[-－—]\\s${sourcePattern}$`) : /$^/, "")
+    .trim();
+}
+
+function eventLine(item: NewsItem) {
+  const category = item.category || "新聞事件";
+  const title = cleanNewsTitle(item);
+  return `${item.code} ${item.company}｜${category}｜${title}（${item.source}）`;
+}
+
+function compactJoin(items: string[], limit = 3) {
+  return items.slice(0, limit).join("；");
+}
+
 function buildDailySignal(code: string, name: string, quote: Quote | undefined, history: PricePoint[]): DailyChartSignal {
   const valid = history.filter((point) => point.close !== null && point.close !== undefined).slice(-8);
   const latest = valid[valid.length - 1] || null;
@@ -143,38 +162,40 @@ function chartSentence(signals: DailyChartSignal[]) {
 
 function localDigest(codes: string[], quotes: Quote[], todayNews: NewsItem[], signals: DailyChartSignal[], targetDate: string): WatchlistDigest {
   const now = new Date();
-  const text = textOf(todayNews);
-  const aiScore = countWords(text, ["AI", "人工智慧", "伺服器", "HPC", "CoWoS", "晶片", "先進製程"]);
-  const etfScore = countWords(text, ["ETF", "除息", "配息", "高股息", "資金流", "受益人"]);
-  const chipScore = countWords(text, ["半導體", "台積電", "聯發科", "IC", "晶圓", "封測"]);
-  const fundScore = countWords(text, ["外資", "法人", "買超", "賣超", "成交量", "籌碼"]);
   const chart = chartSentence(signals);
-
-  const byCode = new Map<string, number>();
-  for (const item of todayNews) byCode.set(item.code, (byCode.get(item.code) || 0) + 1);
-  const topNews = Array.from(byCode.entries()).sort((a, b) => b[1] - a[1])[0];
-  const themes = [
-    aiScore > 0 || chipScore > 0 ? "AI / 半導體" : null,
-    etfScore > 0 ? "ETF / 資金流" : null,
-    fundScore > 0 ? "法人籌碼" : null
-  ].filter((item): item is string => Boolean(item)).join("、") || "盤中量價變化與大盤連動";
+  const eventRows = todayNews.slice(0, 8).map(eventLine);
+  const topEvents = compactJoin(eventRows, 3);
+  const byCode = new Map<string, NewsItem[]>();
+  for (const item of todayNews) {
+    const list = byCode.get(item.code) || [];
+    list.push(item);
+    byCode.set(item.code, list);
+  }
+  const focusedStocks = Array.from(byCode.entries())
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 3)
+    .map(([code, items]) => `${code} ${items[0]?.company || ""}：${items.slice(0, 2).map((item) => cleanNewsTitle(item)).join("；")}`);
 
   const headline = todayNews.length
-    ? `今日自選股消息主要集中在 ${themes}；${chart.breadth}${chart.strongest ? ` 短線強勢焦點落在 ${chart.strongest.code} ${chart.strongest.name}。` : ""}`
-    : `今日尚未取得明確自選股新聞，改以當日圖表與最新報價判讀；${chart.breadth}${chart.strongest ? ` 目前相對強勢為 ${chart.strongest.code} ${chart.strongest.name}。` : ""}`;
+    ? `今日自選股抓到 ${todayNews.length} 則當日消息，重點不是只判斷強弱，而是先看事件本身：${topEvents}。${chart.strongest ? `量價上目前相對突出的是 ${chart.strongest.code} ${chart.strongest.name}（${pctText(chart.strongest.changePct)}）。` : ""}`
+    : `今日尚未抓到自選股的明確新聞，先保留既有畫面並改用當日報價與圖表判讀；${chart.breadth}${chart.strongest ? ` 目前相對突出的是 ${chart.strongest.code} ${chart.strongest.name}（${pctText(chart.strongest.changePct)}）。` : ""}`;
 
   const newsParagraph = todayNews.length
-    ? `本次只納入今日消息，共整理 ${codes.length} 檔自選股、${todayNews.length} 則新聞。${topNews ? `${topNews[0]} 今日新聞數相對較多，可優先確認是否有公司事件、產業題材或法人觀點變化。` : "今日新聞量分散，暫時沒有單一股票明顯集中。"}`
-    : `本次只納入今日消息，但目前沒有抓到自選股的當日新聞，因此摘要改以當日走勢、漲跌幅與成交量變化為主。這樣可以避免用舊新聞誤判今天的盤勢。`;
+    ? `今日實際事件：${eventRows.slice(0, 5).join("；")}。這些內容只根據新聞標題、來源與時間整理，若要確認營收數字、訂單金額或公司說法，仍應點原文。`
+    : `今日新聞來源暫時沒有明確事件，因此不硬套利多／利空模板；這一段會改看最新成交價、漲跌幅與成交量，避免把舊消息誤當成今天事件。`;
+
+  const focusParagraph = focusedStocks.length
+    ? `新聞集中度：${focusedStocks.join("；")}。若同一家公司有多則相似標題，可能是同一事件被不同媒體轉載，不能直接解讀成多個獨立事件。`
+    : `自選股今日新聞分散或不足，量價面可先看 ${chart.leader} ${chart.volume}`;
+
+  const chartParagraph = `${chart.breadth}${chart.leader} ${chart.volume} 這是輔助判斷，不取代新聞事件本身。`;
 
   return {
     headline,
-    paragraphs: [
-      newsParagraph,
-      `${chart.leader} ${chart.volume}`,
-      `自選股組合中同時包含大盤型 ETF、槓桿 ETF、高股息 ETF 與科技權值股，因此今日判讀重點不是單看新聞數，而是要看權值股、ETF 與加權指數是否同步。若只有單一股票上漲但多數自選股偏弱，代表資金可能較分散。`
-    ],
-    outlook: "後續可優先觀察台積電與聯發科是否延續強弱方向、0050 與 00631L 是否跟加權指數同步、0056 與 00878 是否有資金流或除息題材，以及成交量是否配合放大。",
+    paragraphs: [newsParagraph, focusParagraph, chartParagraph],
+    outlook: todayNews.length
+      ? "後續先追蹤上述事件是否有公司公告、法說補充、法人報告或成交量延續；若只有標題沒有細節，介面會保留原文連結，避免摘要自行補不存在的數字。"
+      : "後續等當日新聞補齊後再重新整理；在沒有新聞時，先觀察台積電、聯發科與 ETF 是否同步，以及成交量是否配合放大，不直接下買賣結論。",
     sourceCount: todayNews.length,
     chartCount: signals.filter((item) => item.latestClose !== null).length,
     targetDate,
@@ -198,8 +219,10 @@ async function openAiDigest(codes: string[], quotes: Quote[], todayNews: NewsIte
         content: [
           "你是台股資訊整理助理。請整理網站儀表板中的「自選股當日重點」。",
           "只能以今日新聞與最新日線/報價資料判讀。不要使用近五天或過去新聞當作今日事件。",
-          "如果今日新聞為 0 則，也必須根據最新日線圖表、漲跌幅、成交量與自選股結構做當日盤勢分析。",
-          "請用繁體中文，語氣像財經資訊摘要，不要提供買賣建議，不要捏造未提供的事實。",
+          "最重要：不要套用『強勢／弱勢／資金青睞』模板。headline 與 paragraphs 必須先說明今天實際發生了什麼事，例如公司公告、營收財報、法說、訂單、客戶、產能、股利、法人評等或政策。",
+          "如果今日新聞為 0 則，也必須明說沒有抓到明確當日新聞，再根據最新日線圖表、漲跌幅、成交量與自選股結構做盤勢整理。",
+          "若資料只提供新聞標題，不得捏造標題以外的營收數字、訂單金額、客戶名或公司說法。",
+          "請用繁體中文，語氣像財經資訊摘要，不要提供買賣建議。",
           "輸出必須是 JSON，欄位為 headline、paragraphs、outlook。"
         ].join("\n")
       },
@@ -216,8 +239,8 @@ async function openAiDigest(codes: string[], quotes: Quote[], todayNews: NewsIte
           type: "object",
           additionalProperties: false,
           properties: {
-            headline: { type: "string", description: "一段 80-180 字的當日總結。若今日無新聞，要明確說明以圖表與行情判讀。" },
-            paragraphs: { type: "array", items: { type: "string" }, description: "3 段補充，每段 50-130 字，必須包含新聞與量價/圖表觀察。" },
+            headline: { type: "string", description: "一段 80-180 字的當日總結。必須包含今天實際事件；若今日無新聞，要明確說明以圖表與行情判讀。" },
+            paragraphs: { type: "array", items: { type: "string" }, description: "3 段補充，每段 50-130 字；至少一段列出具體新聞事件，至少一段說明量價/圖表觀察。" },
             outlook: { type: "string", description: "一段 60-140 字後續觀察。" }
           },
           required: ["headline", "paragraphs", "outlook"]

@@ -229,6 +229,55 @@ function quoteToStockMaster(quote: Quote): StockMaster {
   };
 }
 
+const QUICK_STOCKS: StockMaster[] = [
+  { code: "2330", name: "台灣積體電路製造", shortName: "台積電", market: "上市", industry: "半導體", aliases: ["TSMC"] },
+  { code: "2317", name: "鴻海精密", shortName: "鴻海", market: "上市", industry: "電子零組件", aliases: ["Foxconn"] },
+  { code: "2454", name: "聯發科技", shortName: "聯發科", market: "上市", industry: "半導體", aliases: ["MediaTek"] },
+  { code: "2303", name: "聯華電子", shortName: "聯電", market: "上市", industry: "半導體" },
+  { code: "2308", name: "台達電子", shortName: "台達電", market: "上市", industry: "電子零組件" },
+  { code: "2412", name: "中華電信", shortName: "中華電", market: "上市", industry: "通信網路" },
+  { code: "2881", name: "富邦金融控股", shortName: "富邦金", market: "上市", industry: "金融保險" },
+  { code: "2882", name: "國泰金融控股", shortName: "國泰金", market: "上市", industry: "金融保險" },
+  { code: "2884", name: "玉山金融控股", shortName: "玉山金", market: "上市", industry: "金融保險" },
+  { code: "2885", name: "元大金融控股", shortName: "元大金", market: "上市", industry: "金融保險" },
+  { code: "2891", name: "中國信託金融控股", shortName: "中信金", market: "上市", industry: "金融保險" },
+  { code: "3711", name: "日月光投資控股", shortName: "日月光投控", market: "上市", industry: "半導體" },
+  { code: "2382", name: "廣達電腦", shortName: "廣達", market: "上市", industry: "電腦及週邊" },
+  { code: "3231", name: "緯創資通", shortName: "緯創", market: "上市", industry: "電腦及週邊" },
+  { code: "2357", name: "華碩電腦", shortName: "華碩", market: "上市", industry: "電腦及週邊" },
+  { code: "6669", name: "緯穎科技服務", shortName: "緯穎", market: "上市", industry: "電腦及週邊" },
+  { code: "3008", name: "大立光電", shortName: "大立光", market: "上市", industry: "光電" },
+  { code: "3034", name: "聯詠科技", shortName: "聯詠", market: "上市", industry: "半導體" },
+  { code: "2379", name: "瑞昱半導體", shortName: "瑞昱", market: "上市", industry: "半導體" },
+  { code: "2395", name: "研華", shortName: "研華", market: "上市", industry: "電腦及週邊" },
+  { code: "2603", name: "長榮海運", shortName: "長榮", market: "上市", industry: "航運" },
+  { code: "2609", name: "陽明海運", shortName: "陽明", market: "上市", industry: "航運" },
+  { code: "2615", name: "萬海航運", shortName: "萬海", market: "上市", industry: "航運" },
+  { code: "1301", name: "台灣塑膠", shortName: "台塑", market: "上市", industry: "塑膠" },
+  { code: "1303", name: "南亞塑膠", shortName: "南亞", market: "上市", industry: "塑膠" },
+  { code: "2002", name: "中國鋼鐵", shortName: "中鋼", market: "上市", industry: "鋼鐵" },
+  { code: "1216", name: "統一企業", shortName: "統一", market: "上市", industry: "食品" },
+  { code: "2207", name: "和泰汽車", shortName: "和泰車", market: "上市", industry: "汽車" },
+  { code: "5871", name: "中租控股", shortName: "中租-KY", market: "上市", industry: "其他" },
+  { code: "0050", name: "元大台灣50", shortName: "元大台灣50", market: "ETF", industry: "ETF", aliases: ["0050"] },
+  { code: "0056", name: "元大高股息", shortName: "元大高股息", market: "ETF", industry: "ETF" },
+  { code: "006208", name: "富邦台50", shortName: "富邦台50", market: "ETF", industry: "ETF" },
+  { code: "00631L", name: "元大台灣50正2", shortName: "元大台灣50正2", market: "ETF", industry: "ETF" },
+  { code: "00632R", name: "元大台灣50反1", shortName: "元大台灣50反1", market: "ETF", industry: "ETF" },
+  { code: "00878", name: "國泰永續高股息", shortName: "國泰永續高股息", market: "ETF", industry: "ETF" },
+  { code: "00919", name: "群益台灣精選高息", shortName: "群益台灣精選高息", market: "ETF", industry: "ETF" },
+  { code: "00929", name: "復華台灣科技優息", shortName: "復華台灣科技優息", market: "ETF", industry: "ETF" },
+  { code: "00940", name: "元大台灣價值高息", shortName: "元大台灣價值高息", market: "ETF", industry: "ETF" },
+  { code: "00981A", name: "主動統一台股增長", shortName: "00981A", market: "ETF", industry: "ETF" }
+];
+
+function codeCandidateFromQuery(value: string): StockMaster | null {
+  const code = normalizeSearchText(value).toUpperCase();
+  if (!/^[0-9A-Z]{4,6}$/.test(code)) return null;
+  return { code, name: code, shortName: code, market: code.startsWith("00") ? "ETF" : "未知", industry: code.startsWith("00") ? "ETF" : undefined, aliases: [] };
+}
+
+
 function stockMatches(stock: StockMaster, query: string) {
   const haystack = [stock.code, stock.name, stock.shortName, stock.market, stock.industry, ...(stock.aliases || [])]
     .filter((item): item is string => Boolean(item))
@@ -253,11 +302,20 @@ function localSearchStocks(value: string, quoteList: Quote[], limit = 12): Stock
   const query = normalizeSearchText(value);
   if (!query) return [];
   const byCode = new Map<string, StockMaster>();
+
+  for (const item of QUICK_STOCKS) {
+    if (stockMatches(item, query)) byCode.set(item.code, item);
+  }
+
   for (const quote of quoteList) {
     if (!quote.code) continue;
     const stock = quoteToStockMaster(quote);
     if (stockMatches(stock, query)) byCode.set(stock.code, stock);
   }
+
+  const codeCandidate = codeCandidateFromQuery(value);
+  if (codeCandidate && !byCode.has(codeCandidate.code)) byCode.set(codeCandidate.code, codeCandidate);
+
   return Array.from(byCode.values())
     .sort((a, b) => scoreStock(a, query) - scoreStock(b, query) || a.code.localeCompare(b.code))
     .slice(0, limit);
@@ -325,6 +383,7 @@ function TaiexPanel({ isDark }: { isDark: boolean }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastCheck, setLastCheck] = useState("");
+  const hasTaiexDataRef = useRef(false);
   const latest = points[points.length - 1] || null;
   const activeRange = taiexRanges.find((item) => item.key === range)?.label || "近一周";
   const changeTone = moveColorClass(latest?.change);
@@ -335,28 +394,30 @@ function TaiexPanel({ isDark }: { isDark: boolean }) {
 
   useEffect(() => {
     let ignore = false;
-    async function loadTaiex() {
-      setLoading(true);
+    async function loadTaiex(options?: { silent?: boolean }) {
+      const silent = options?.silent ?? false;
+      if (!silent && !hasTaiexDataRef.current) setLoading(true);
       setError(null);
       try {
         const res = await fetch(`/api/market/taiex?range=${range}`, { cache: "no-store" });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "無法取得台灣加權指數資料");
         if (!ignore) {
-          setPoints(Array.isArray(json.data) ? json.data : []);
-          setLastCheck(new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }));
+          const nextPoints = Array.isArray(json.data) ? json.data : [];
+          if (nextPoints.length) {
+            hasTaiexDataRef.current = true;
+            setPoints(nextPoints);
+            setLastCheck(new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }));
+          }
         }
       } catch (err) {
-        if (!ignore) {
-          setPoints([]);
-          setError(err instanceof Error ? err.message : "台灣加權指數資料載入失敗");
-        }
+        if (!ignore) setError(err instanceof Error ? err.message : "台灣加權指數資料更新失敗，已保留上一筆資料");
       } finally {
         if (!ignore) setLoading(false);
       }
     }
     loadTaiex();
-    const timer = window.setInterval(loadTaiex, 30_000);
+    const timer = window.setInterval(() => loadTaiex({ silent: true }), 30_000);
     return () => {
       ignore = true;
       window.clearInterval(timer);
@@ -390,7 +451,7 @@ function TaiexPanel({ isDark }: { isDark: boolean }) {
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <Badge>{loading ? "載入中" : `${points.length} 筆`}</Badge>
+            <Badge>{points.length ? `${points.length} 筆` : loading ? "載入中" : "0 筆"}</Badge>
             <span className={cn("text-[11px]", isDark ? "text-slate-500" : "text-slate-500")}>更新：{lastCheck || "--"}</span>
           </div>
         </div>
@@ -453,6 +514,7 @@ function FuturesPanel({ session, setSession, range, setRange, isDark }: {
   const [points, setPoints] = useState<FuturesPoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasFuturesDataRef = useRef(false);
   const sessionTabs: { key: FuturesSession; label: string }[] = [
     { key: "regular", label: "一般" },
     { key: "after", label: "盤後" },
@@ -476,25 +538,29 @@ function FuturesPanel({ session, setSession, range, setRange, isDark }: {
 
   useEffect(() => {
     let ignore = false;
-    async function loadFutures() {
-      setLoading(true);
+    async function loadFutures(options?: { silent?: boolean }) {
+      const silent = options?.silent ?? false;
+      if (!silent && !hasFuturesDataRef.current) setLoading(true);
       setError(null);
       try {
         const res = await fetch(`/api/futures?session=${session}&range=${range}`, { cache: "no-store" });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "無法取得台指期資料");
-        if (!ignore) setPoints(Array.isArray(json.data) ? json.data : []);
-      } catch (err) {
         if (!ignore) {
-          setPoints([]);
-          setError(err instanceof Error ? err.message : "台指期資料載入失敗");
+          const nextPoints = Array.isArray(json.data) ? json.data : [];
+          if (nextPoints.length) {
+            hasFuturesDataRef.current = true;
+            setPoints(nextPoints);
+          }
         }
+      } catch (err) {
+        if (!ignore) setError(err instanceof Error ? err.message : "台指期資料更新失敗，已保留上一筆資料");
       } finally {
         if (!ignore) setLoading(false);
       }
     }
     loadFutures();
-    const timer = window.setInterval(loadFutures, 30_000);
+    const timer = window.setInterval(() => loadFutures({ silent: true }), 30_000);
     return () => {
       ignore = true;
       window.clearInterval(timer);
@@ -564,7 +630,7 @@ function FuturesPanel({ session, setSession, range, setRange, isDark }: {
         <div className={cn("rounded-3xl border p-4", isDark ? "border-white/10 bg-slate-950/70" : "border-slate-200 bg-slate-50")}>
           <div className="mb-3 flex items-center justify-between gap-3">
             <p className="font-bold">TX 走勢</p>
-            <p className={cn("text-xs", isDark ? "text-slate-400" : "text-slate-500")}>{loading ? "載入中..." : `${points.length} 筆`}</p>
+            <p className={cn("text-xs", isDark ? "text-slate-400" : "text-slate-500")}>{points.length ? `${points.length} 筆` : loading ? "載入中..." : "0 筆"}</p>
           </div>
           <div className="h-72">
             {points.length ? (
@@ -599,6 +665,7 @@ export default function HomePage() {
   const [theme, setTheme] = useState<Theme>("dark");
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<StockMaster[]>([]);
+  const [searchingStocks, setSearchingStocks] = useState(false);
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [selectedCode, setSelectedCode] = useState("2330");
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
@@ -633,47 +700,59 @@ export default function HomePage() {
     return new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
   }
 
-  async function loadQuotes() {
-    setLoading((prev) => ({ ...prev, quotes: true }));
+  async function loadQuotes(options?: { silent?: boolean }) {
+    const silent = options?.silent ?? false;
+    if (!silent && quotes.length === 0) {
+      setLoading((prev) => ({ ...prev, quotes: true }));
+    }
     try {
       const res = await fetch("/api/stocks/quote", { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得股票行情");
-      setQuotes(json.data || []);
-      setLastQuoteCheck(stamp());
+      const nextQuotes = Array.isArray(json.data) ? json.data : [];
+      if (nextQuotes.length) {
+        setQuotes(nextQuotes);
+        setLastQuoteCheck(stamp());
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "行情載入失敗");
+      setError(err instanceof Error ? err.message : "行情更新失敗，已保留上一筆資料");
     } finally {
       setLoading((prev) => ({ ...prev, quotes: false }));
     }
   }
 
-  async function loadSelected(code: string, resetAnalysis = true) {
-    setLoading((prev) => ({ ...prev, selected: true }));
+  async function loadSelected(code: string, options: boolean | { silent?: boolean; resetAnalysis?: boolean } = true) {
+    const silent = typeof options === "boolean" ? false : options.silent ?? false;
+    const resetAnalysis = typeof options === "boolean" ? options : options.resetAnalysis ?? true;
+    if (!silent && !selectedQuote) {
+      setLoading((prev) => ({ ...prev, selected: true }));
+    }
     if (resetAnalysis) setAnalysis(null);
     try {
       const res = await fetch(`/api/stocks/quote?code=${encodeURIComponent(code)}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得個股資料");
-      setSelectedQuote(json.data);
+      if (json.data) setSelectedQuote(json.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "個股載入失敗");
-      setSelectedQuote(null);
+      setError(err instanceof Error ? err.message : "個股更新失敗，已保留上一筆資料");
     } finally {
       setLoading((prev) => ({ ...prev, selected: false }));
     }
   }
 
-  async function loadHistory(code: string, selectedRange: RangeKey) {
-    setLoading((prev) => ({ ...prev, history: true }));
+  async function loadHistory(code: string, selectedRange: RangeKey, options?: { silent?: boolean }) {
+    const silent = options?.silent ?? false;
+    if (!silent && history.length === 0) {
+      setLoading((prev) => ({ ...prev, history: true }));
+    }
     try {
       const res = await fetch(`/api/stocks/history?code=${encodeURIComponent(code)}&range=${selectedRange}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得歷史資料");
-      setHistory(json.data || []);
+      const nextHistory = Array.isArray(json.data) ? json.data : [];
+      if (nextHistory.length) setHistory(nextHistory);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "趨勢圖載入失敗");
-      setHistory([]);
+      setError(err instanceof Error ? err.message : "趨勢圖更新失敗，已保留上一筆資料");
     } finally {
       setLoading((prev) => ({ ...prev, history: false }));
     }
@@ -698,25 +777,37 @@ export default function HomePage() {
           }
         })
       );
-      setWatchHistories(Object.fromEntries(entries));
+      setWatchHistories((prev) => {
+        const next: Record<string, PricePoint[]> = {};
+        for (const code of targets) next[code] = prev[code] || [];
+        for (const [code, points] of entries) {
+          if (points.length) next[code] = points;
+        }
+        return next;
+      });
     } finally {
       setWatchHistoryLoading(false);
     }
   }
 
-  async function loadNews(code: string, company?: string) {
-    setLoading((prev) => ({ ...prev, news: true }));
+  async function loadNews(code: string, company?: string, options?: { silent?: boolean }) {
+    const silent = options?.silent ?? false;
+    if (!silent && news.length === 0) {
+      setLoading((prev) => ({ ...prev, news: true }));
+    }
     try {
-      const params = new URLSearchParams({ code });
+      const params = new URLSearchParams({ code, days: "5" });
       if (company) params.set("company", company);
       const res = await fetch(`/api/news?${params.toString()}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得新聞");
-      setNews(json.data || []);
-      setLastNewsCheck(stamp());
+      const nextNews = Array.isArray(json.data) ? json.data : [];
+      if (nextNews.length) {
+        setNews(nextNews);
+        setLastNewsCheck(stamp());
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "新聞載入失敗");
-      setNews([]);
+      setError(err instanceof Error ? err.message : "新聞更新失敗，已保留上一筆資料");
     } finally {
       setLoading((prev) => ({ ...prev, news: false }));
     }
@@ -731,6 +822,7 @@ export default function HomePage() {
     if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current);
 
     if (!trimmed) {
+      setSearchingStocks(false);
       setSearchResults([]);
       return;
     }
@@ -740,20 +832,26 @@ export default function HomePage() {
     setSearchResults(localResults);
 
     const exactLocalMatch = localResults.some((stock) => normalizeSearchText(stock.code) === normalizeSearchText(trimmed));
-    if (localResults.length >= 8 || exactLocalMatch) return;
+    if (localResults.length >= 8 || exactLocalMatch) {
+      setSearchingStocks(false);
+      return;
+    }
 
     // 若本機清單不足，再延遲查完整主檔，避免每打一個字都打 API。
+    setSearchingStocks(true);
     searchTimerRef.current = window.setTimeout(async () => {
       try {
-        const res = await fetch(`/api/stocks/search?q=${encodeURIComponent(trimmed)}&limit=12`);
+        const res = await fetch(`/api/stocks/search?q=${encodeURIComponent(trimmed)}&limit=12`, { cache: "force-cache" });
         const json = await res.json();
         if (currentSeq !== searchSeqRef.current) return;
         const remoteResults = Array.isArray(json.data) ? json.data : [];
         setSearchResults(mergeStockResults(localResults, remoteResults, 12));
       } catch {
         if (currentSeq === searchSeqRef.current && !localResults.length) setSearchResults([]);
+      } finally {
+        if (currentSeq === searchSeqRef.current) setSearchingStocks(false);
       }
-    }, 300);
+    }, 600);
   }
 
   async function analyzeNews() {
@@ -797,8 +895,7 @@ export default function HomePage() {
         setLastWatchlistDigestCheck(stamp());
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "自選股 AI 摘要失敗");
-      setWatchlistDigest(fallbackWatchlistDigest);
+      setError(err instanceof Error ? err.message : "自選股 AI 摘要更新失敗，已保留上一筆整理");
     } finally {
       setWatchlistDigestLoading(false);
     }
@@ -807,10 +904,10 @@ export default function HomePage() {
   async function refreshVisibleData() {
     setError(null);
     await Promise.all([
-      loadQuotes(),
-      loadSelected(selectedCode, false),
-      loadHistory(selectedCode, range),
-      loadNews(selectedCode, selectedQuote?.name),
+      loadQuotes({ silent: false }),
+      loadSelected(selectedCode, { resetAnalysis: false }),
+      loadHistory(selectedCode, range, { silent: false }),
+      loadNews(selectedCode, selectedQuote?.name, { silent: false }),
       chartMode === "watchlist" ? loadWatchHistories(watchlist, range) : Promise.resolve()
     ]);
   }
@@ -856,7 +953,9 @@ export default function HomePage() {
     loadHistory(selectedCode, range);
     loadNews(selectedCode, "台積電");
 
-    const quoteTimer = window.setInterval(loadQuotes, QUOTE_REFRESH_MS);
+    const quoteTimer = window.setInterval(() => {
+      loadQuotes({ silent: true });
+    }, QUOTE_REFRESH_MS);
     return () => {
       window.clearInterval(quoteTimer);
     };
@@ -864,14 +963,14 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => loadSelected(selectedCode, false), SELECTED_REFRESH_MS);
+    const timer = window.setInterval(() => loadSelected(selectedCode, { silent: true, resetAnalysis: false }), SELECTED_REFRESH_MS);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCode]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      loadHistory(selectedCode, range);
+      loadHistory(selectedCode, range, { silent: true });
       if (chartMode === "watchlist") {
         loadWatchHistories(watchlist, range);
       }
@@ -894,7 +993,7 @@ export default function HomePage() {
   }, [watchlist.join(",")]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => loadNews(selectedCode, selectedQuote?.name), NEWS_REFRESH_MS);
+    const timer = window.setInterval(() => loadNews(selectedCode, selectedQuote?.name, { silent: true }), NEWS_REFRESH_MS);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCode, selectedQuote?.name]);
@@ -1088,7 +1187,7 @@ export default function HomePage() {
                     </div>
                     <Badge>{stock.market}</Badge>
                   </button>
-                )) : <EmptyState title="找不到股票" text="請改用代號或公司簡稱。" />}
+                )) : searchingStocks ? <EmptyState title="搜尋中" text="正在查完整股票清單。" /> : <EmptyState title="找不到股票" text="請改用代號或公司簡稱。" />}
               </div>
             )}
             <div className={cn("hidden items-center rounded-full border px-3 py-2 text-xs font-bold md:flex", softPanel)}>
@@ -1123,7 +1222,7 @@ export default function HomePage() {
           </div>
           <div className="space-y-4">
             <WatchStatusCard
-              summary={loading.quotes ? "載入中" : watchSummaryTitle}
+              summary={quotes.length ? watchSummaryTitle : "載入中"}
               validCount={watchSummary.valid.length}
               totalCount={watchlist.length}
               strongest={watchSummary.strongest}
@@ -1142,7 +1241,7 @@ export default function HomePage() {
                 lines={[`漲幅 > 3%：${marketStats.upBuckets.over3} 檔`, `漲幅 1%～3%：${marketStats.upBuckets.oneTo3} 檔`, `漲幅 < 1%：${marketStats.upBuckets.under1} 檔`]}
                 industryText={topIndustryText(marketStats.up)}
                 examples={marketStats.up.slice(0, 3).map(quoteMoveLabel)}
-                loading={loading.quotes}
+                loading={!quotes.length && loading.quotes}
                 theme={theme}
               />
               <MarketBreadthCard
@@ -1154,7 +1253,7 @@ export default function HomePage() {
                 lines={[`跌幅 > 3%：${marketStats.downBuckets.over3} 檔`, `跌幅 1%～3%：${marketStats.downBuckets.oneTo3} 檔`, `跌幅 < 1%：${marketStats.downBuckets.under1} 檔`]}
                 industryText={topIndustryText(marketStats.down)}
                 examples={marketStats.down.slice(0, 3).map(quoteMoveLabel)}
-                loading={loading.quotes}
+                loading={!quotes.length && loading.quotes}
                 theme={theme}
               />
               <MarketBreadthCard
@@ -1166,7 +1265,7 @@ export default function HomePage() {
                 lines={[`門檻：漲幅 ≥ 6.5%`, `佔比：${formatShare(marketStats.nearLimitUp.length, marketStats.valid.length)}`, `持平：${marketStats.flat} 檔`]}
                 industryText={topIndustryText(marketStats.nearLimitUp)}
                 examples={marketStats.nearLimitUp.slice(0, 3).map(quoteMoveLabel)}
-                loading={loading.quotes}
+                loading={!quotes.length && loading.quotes}
                 theme={theme}
               />
               <MarketBreadthCard
@@ -1178,7 +1277,7 @@ export default function HomePage() {
                 lines={[`門檻：跌幅 ≤ -6.5%`, `佔比：${formatShare(marketStats.nearLimitDown.length, marketStats.valid.length)}`, `有效行情：${formatCount(marketStats.valid.length)} 檔`]}
                 industryText={topIndustryText(marketStats.nearLimitDown)}
                 examples={marketStats.nearLimitDown.slice(0, 3).map(quoteMoveLabel)}
-                loading={loading.quotes}
+                loading={!quotes.length && loading.quotes}
                 theme={theme}
               />
             </div>
@@ -1268,7 +1367,7 @@ export default function HomePage() {
                   )}
                   <div className="h-72">
                     {chartMode === "single" ? (
-                      loading.history ? <EmptyState title="趨勢圖載入中" /> : history.length ? (
+                      loading.history && !history.length ? <EmptyState title="趨勢圖載入中" /> : history.length ? (
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart data={history.map((p) => ({ ...p, close: p.close ?? 0 }))} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                             <CartesianGrid stroke={isDark ? "rgba(148,163,184,.15)" : "rgba(15,23,42,.1)"} vertical={false} />
@@ -1280,7 +1379,7 @@ export default function HomePage() {
                         </ResponsiveContainer>
                       ) : <EmptyState title="沒有趨勢資料" />
                     ) : (
-                      watchHistoryLoading ? <EmptyState title="綜合圖載入中" /> : compositeChart.series.length ? (
+                      watchHistoryLoading && !compositeChart.series.length ? <EmptyState title="綜合圖載入中" /> : compositeChart.series.length ? (
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart data={compositeChart.data} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
                             <CartesianGrid stroke={isDark ? "rgba(148,163,184,.15)" : "rgba(15,23,42,.1)"} vertical={false} />
@@ -1307,6 +1406,7 @@ export default function HomePage() {
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
                 <h2 className="text-xl font-bold">自選股當日重點</h2>
+                <p className={cn("mt-1 text-sm", muted)}>以新聞事件與當日圖表為主，不套用固定強弱模板。</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Badge>{watchlist.length} 檔自選</Badge>
@@ -1338,11 +1438,11 @@ export default function HomePage() {
           <div className={cn("rounded-[2rem] border p-5", panel)}>
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
-                <h2 className="text-xl font-bold">{selectedCompanyName} 近五天新聞</h2>
-                <p className={cn("mt-1 text-sm", muted)}>更新：{lastNewsCheck || "--"}</p>
+                <h2 className="text-xl font-bold">{selectedCompanyName} 近五天新聞與當日重點</h2>
+                <p className={cn("mt-1 text-sm", muted)}>優先整理實際事件，不只判斷強勢或弱勢。更新：{lastNewsCheck || "--"}</p>
               </div>
               <button onClick={analyzeNews} disabled={loading.analysis || !news.length} className="rounded-full bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
-                {loading.analysis ? "分析中" : "分析新聞"}
+                {loading.analysis ? "整理事件中" : "整理近五天與當日重點"}
               </button>
             </div>
 
@@ -1375,7 +1475,7 @@ export default function HomePage() {
             )}
 
             <div className="mt-5 grid gap-4 md:grid-cols-2">
-              {loading.news ? <EmptyState title="新聞載入中" /> : news.length ? news.map((item) => (
+              {loading.news && !news.length ? <EmptyState title="新聞載入中" /> : news.length ? news.map((item) => (
                 <article key={item.id} className={cn("rounded-3xl border p-5", softPanel)}>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge>{item.code} {item.company}</Badge>
@@ -1383,6 +1483,7 @@ export default function HomePage() {
                     <span className={cn("text-xs", muted)}>{new Date(item.publishedAt).toLocaleString("zh-TW")} / {item.source}</span>
                   </div>
                   <h3 className="mt-3 font-bold leading-6">{item.title}</h3>
+                  {item.excerpt && <p className={cn("mt-2 text-sm leading-6", muted)}>{item.excerpt}</p>}
                   <div className="mt-4 flex flex-wrap gap-2">
                     <a href={item.url} target="_blank" rel="noreferrer" className="rounded-full bg-slate-950 px-3 py-1.5 text-xs font-bold text-white dark:bg-white dark:text-slate-950">開啟原文</a>
                   </div>
@@ -1396,7 +1497,7 @@ export default function HomePage() {
                   <h3 className="text-xl font-black">熱門排行</h3>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Badge>{loading.quotes ? "更新中" : `${popularRows.length} 檔`}</Badge>
+                  <Badge>{quotes.length ? `${popularRows.length} 檔` : "載入中"}</Badge>
                   <Badge tone="warn">成交額</Badge>
                 </div>
               </div>
