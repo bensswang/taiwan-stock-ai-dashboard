@@ -22,6 +22,7 @@ type WatchlistDigest = {
 type DailyChartSignal = {
   code: string;
   name: string;
+  industry?: string;
   latestDate: string | null;
   latestClose: number | null;
   previousClose: number | null;
@@ -38,6 +39,52 @@ type CacheEntry = {
 };
 
 const cache = new Map<string, CacheEntry>();
+
+const categoryText: Record<string, string> = {
+  營收財報: "營收、獲利或財測展望",
+  法說展望: "法說會與公司展望",
+  訂單客戶: "客戶、訂單或供應鏈分配",
+  產能投資: "產能、擴產或資本支出",
+  產品技術: "產品、技術或 AI 供應鏈",
+  股利除權息: "股利、配息與除權息",
+  法人籌碼: "法人評等與籌碼變化",
+  股價市場: "股價、量能與市場反應",
+  產業政策: "政策、關稅或地緣風險",
+  公司公告: "公司公告或重大訊息",
+  新聞事件: "公司與產業消息"
+};
+
+const industryMap: Record<string, string> = {
+  "24": "半導體",
+  "25": "電腦週邊",
+  "28": "電子零組件",
+  "17": "金融保險",
+  "15": "航運",
+  ETF: "ETF"
+};
+
+const bannedVisiblePhrases = [
+  "這一段是把新聞歸納成共同脈絡，不逐條搬標題。",
+  "不逐條搬標題",
+  "不硬套利多或利空模板",
+  "不把舊消息包裝成今天事件",
+  "不把舊新聞包裝成今日利多或利空",
+  "摘要只整理事件與盤勢，不提供買賣建議。",
+  "不提供買賣建議。"
+];
+
+function cleanVisibleText(value: string) {
+  let next = String(value || "").replace(/\s+/g, " ").trim();
+  for (const phrase of bannedVisiblePhrases) next = next.replaceAll(phrase, "");
+  return next.replace(/\s+([，。；])/g, "$1").replace(/。{2,}/g, "。").trim();
+}
+
+function listText(items: string[]) {
+  const unique = Array.from(new Set(items.filter(Boolean)));
+  if (unique.length <= 1) return unique[0] || "公司與產業消息";
+  if (unique.length === 2) return `${unique[0]}與${unique[1]}`;
+  return `${unique.slice(0, -1).join("、")}與${unique[unique.length - 1]}`;
+}
 
 function uniq<T>(items: T[]): T[] {
   return Array.from(new Set(items));
@@ -67,22 +114,9 @@ function isSameTaiwanDate(value: string, targetDate: string) {
   return taiwanDateString(time) === targetDate;
 }
 
-function textOf(news: NewsItem[]) {
-  return news.map((item) => `${item.code} ${item.company} ${item.title} ${item.excerpt || ""} ${item.category || ""}`).join(" ");
-}
-
-function countWords(text: string, words: string[]) {
-  return words.reduce((sum, word) => sum + (text.includes(word) ? 1 : 0), 0);
-}
-
 function pctText(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) return "--";
   return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
-}
-
-function numText(value: number | null | undefined, digits = 2) {
-  if (value === null || value === undefined || Number.isNaN(value)) return "--";
-  return value.toLocaleString("zh-TW", { maximumFractionDigits: digits });
 }
 
 function cleanNewsTitle(item: NewsItem) {
@@ -94,17 +128,69 @@ function cleanNewsTitle(item: NewsItem) {
     .trim();
 }
 
-function eventLine(item: NewsItem) {
-  const category = item.category || "新聞事件";
-  const title = cleanNewsTitle(item);
-  return `${item.code} ${item.company}｜${category}｜${title}（${item.source}）`;
+function dedupeNews(news: NewsItem[]) {
+  const seen = new Set<string>();
+  return news.filter((item) => {
+    const key = cleanNewsTitle(item).replace(/[\s，,。！!？?：:「」『』《》]/g, "").slice(0, 30);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-function compactJoin(items: string[], limit = 3) {
-  return items.slice(0, limit).join("；");
+function readableIndustry(value?: string | null) {
+  if (!value) return "未分類";
+  const trimmed = value.trim();
+  return industryMap[trimmed] || industryMap[trimmed.padStart(2, "0")] || trimmed;
 }
 
-function buildDailySignal(code: string, name: string, quote: Quote | undefined, history: PricePoint[]): DailyChartSignal {
+function categoryLabel(value?: string) {
+  if (!value) return "公司與產業消息";
+  return categoryText[value] || value;
+}
+
+function inferEventThemes(news: NewsItem[]) {
+  const text = news.map((item) => `${item.code} ${item.company} ${item.title} ${item.excerpt || ""} ${item.category || ""}`).join(" ");
+  const themes: string[] = [];
+  if (/AI|人工智慧|輝達|NVIDIA|GPU|伺服器|CoWoS|先進封裝|先進製程|半導體/i.test(text)) themes.push("AI、先進製程與先進封裝供應鏈");
+  if (/蘋果|Apple|英特爾|Intel|三星|Samsung|轉單|代工|客戶|供應鏈|訂單/i.test(text)) themes.push("客戶分散供應與轉單風險");
+  if (/營收|財報|EPS|獲利|毛利|年增|月增|展望|財測|法說/i.test(text)) themes.push("營收財報與公司展望");
+  if (/外資|投信|自營商|法人|買超|賣超|目標價|評等|調升|調降/i.test(text)) themes.push("法人籌碼與評價調整");
+  if (/股利|配息|除息|除權|殖利率/i.test(text)) themes.push("股利配息與除權息題材");
+  if (/政策|關稅|出口管制|補助|制裁|地緣|美國|中國/i.test(text)) themes.push("政策與地緣風險");
+  if (/航運|運價|貨櫃|散裝/i.test(text)) themes.push("航運報價與景氣循環");
+  if (/金融|金控|銀行|壽險|匯損|升息|降息|利率/i.test(text)) themes.push("金融股利差、匯率與資產品質");
+  return themes.slice(0, 3);
+}
+
+function topCategories(news: NewsItem[]) {
+  const counts = new Map<string, number>();
+  for (const item of news) {
+    const label = categoryLabel(item.category || "新聞事件");
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3);
+}
+
+function topNewsStocks(news: NewsItem[]) {
+  const byCode = new Map<string, NewsItem[]>();
+  for (const item of news) {
+    const list = byCode.get(item.code) || [];
+    list.push(item);
+    byCode.set(item.code, list);
+  }
+  return Array.from(byCode.entries())
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 3)
+    .map(([code, items]) => ({
+      code,
+      company: items[0]?.company || code,
+      count: items.length,
+      categories: topCategories(items).map(([name]) => name)
+    }));
+}
+
+function buildDailySignal(code: string, name: string, industry: string | undefined, quote: Quote | undefined, history: PricePoint[]): DailyChartSignal {
   const valid = history.filter((point) => point.close !== null && point.close !== undefined).slice(-8);
   const latest = valid[valid.length - 1] || null;
   const previous = valid[valid.length - 2] || null;
@@ -127,6 +213,7 @@ function buildDailySignal(code: string, name: string, quote: Quote | undefined, 
   return {
     code,
     name,
+    industry,
     latestDate: latest?.date || quote?.updatedAt?.slice(0, 10) || null,
     latestClose,
     previousClose,
@@ -138,65 +225,107 @@ function buildDailySignal(code: string, name: string, quote: Quote | undefined, 
   };
 }
 
-function chartSentence(signals: DailyChartSignal[]) {
+function chartContext(signals: DailyChartSignal[]) {
   const valid = signals.filter((item) => item.direction !== "unknown");
   const up = valid.filter((item) => item.direction === "up");
   const down = valid.filter((item) => item.direction === "down");
   const flat = valid.filter((item) => item.direction === "flat");
-  const strongest = [...valid].sort((a, b) => (b.changePct ?? -999) - (a.changePct ?? -999))[0];
-  const weakest = [...valid].sort((a, b) => (a.changePct ?? 999) - (b.changePct ?? 999))[0];
-  const active = valid.filter((item) => (item.volumeRatio ?? 0) >= 1.2).sort((a, b) => (b.volumeRatio ?? 0) - (a.volumeRatio ?? 0))[0];
+  const strongest = [...valid].sort((a, b) => (b.changePct ?? -999) - (a.changePct ?? -999))[0] || null;
+  const weakest = [...valid].sort((a, b) => (a.changePct ?? 999) - (b.changePct ?? 999))[0] || null;
+  const active = valid.filter((item) => (item.volumeRatio ?? 0) >= 1.2).sort((a, b) => (b.volumeRatio ?? 0) - (a.volumeRatio ?? 0))[0] || null;
+  const byIndustry = new Map<string, { count: number; avgPct: number; items: DailyChartSignal[] }>();
+  for (const item of valid) {
+    const key = readableIndustry(item.industry);
+    const record = byIndustry.get(key) || { count: 0, avgPct: 0, items: [] };
+    record.count += 1;
+    record.avgPct += item.changePct || 0;
+    record.items.push(item);
+    byIndustry.set(key, record);
+  }
+  const industries = Array.from(byIndustry.entries())
+    .map(([name, record]) => ({ ...record, name, avgPct: record.count ? record.avgPct / record.count : 0 }))
+    .sort((a, b) => Math.abs(b.avgPct) - Math.abs(a.avgPct));
+  return { valid, up, down, flat, strongest, weakest, active, industries };
+}
 
-  const breadth = valid.length
-    ? `自選股最新日線中，上漲 ${up.length} 檔、下跌 ${down.length} 檔、持平 ${flat.length} 檔。`
-    : "目前自選股缺少足夠日線資料，盤勢判讀會以可取得報價為主。";
-  const leader = strongest
-    ? `相對強勢為 ${strongest.code} ${strongest.name}（${pctText(strongest.changePct)}），相對弱勢為 ${weakest?.code} ${weakest?.name}（${pctText(weakest?.changePct)}）。`
-    : "目前尚無法穩定排序強弱。";
-  const volume = active
-    ? `${active.code} ${active.name} 成交量相對近期均量較高，量能約為近期均量的 ${active.volumeRatio?.toFixed(1)} 倍。`
-    : "成交量目前未見明顯放大訊號，後續仍要留意量價是否同步。";
+function breadthText(chart: ReturnType<typeof chartContext>) {
+  if (!chart.valid.length) return "目前自選股缺少足夠報價與日線資料，整體強弱暫時只能保守判讀。";
+  const bias = chart.up.length > chart.down.length ? "偏強" : chart.down.length > chart.up.length ? "偏弱" : "震盪";
+  return `今日自選股整體${bias}，可判讀的 ${chart.valid.length} 檔中有 ${chart.up.length} 檔上漲、${chart.down.length} 檔下跌、${chart.flat.length} 檔持平。`;
+}
 
-  return { breadth, leader, volume, up, down, flat, strongest, weakest, active };
+function industryText(chart: ReturnType<typeof chartContext>) {
+  const top = chart.industries.slice(0, 2).filter((item) => item.name !== "未分類");
+  if (!top.length) return "產業分布暫時沒有明顯共同方向。";
+  return `變動較集中的類股是${top.map((item) => `${item.name}平均 ${pctText(item.avgPct)}`).join("、")}，代表今天不是每檔股票平均變動，而是有特定族群影響自選股表現。`;
+}
+
+function leaderText(chart: ReturnType<typeof chartContext>) {
+  const parts: string[] = [];
+  if (chart.strongest) parts.push(`相對支撐是 ${chart.strongest.code} ${chart.strongest.name}（${pctText(chart.strongest.changePct)}）`);
+  if (chart.weakest) parts.push(`主要拖累是 ${chart.weakest.code} ${chart.weakest.name}（${pctText(chart.weakest.changePct)}）`);
+  if (chart.active) parts.push(`${chart.active.code} ${chart.active.name} 量能約為近期均量的 ${chart.active.volumeRatio?.toFixed(1)} 倍`);
+  return parts.length ? `${parts.join("；")}。` : "目前尚無法穩定排序相對支撐、拖累與量能放大個股。";
+}
+
+function eventInsight(todayNews: NewsItem[]) {
+  const news = dedupeNews(todayNews);
+  if (!news.length) {
+    return {
+      themeText: "今日未抓到明確的自選股公司新聞，重點先放在最新報價、成交量與自選股結構。",
+      focusText: "沒有明確事件時，應優先觀察跌幅較大、成交量放大、或明顯弱於大盤的個股，等待後續新聞或公告補齊原因。",
+      headlineTheme: "量價與族群結構",
+      categories: [] as [string, number][],
+      stocks: [] as ReturnType<typeof topNewsStocks>,
+      count: 0
+    };
+  }
+  const themes = inferEventThemes(news);
+  const categories = topCategories(news);
+  const stocks = topNewsStocks(news);
+  const categoryPhrase = categories.length
+    ? categories.map(([name, count]) => `${name}${count > 1 ? ` ${count} 則` : ""}`).join("、")
+    : "公司與產業消息";
+  const stockPhrase = stocks.length
+    ? stocks.map((item) => `${item.code} ${item.company}`).join("、")
+    : "多檔自選股";
+  const headlineTheme = themes.length ? listText(themes.slice(0, 2)) : categoryPhrase;
+  return {
+    themeText: `今日自選股消息焦點集中在${headlineTheme}，涉及 ${stockPhrase}。`,
+    focusText: `這些消息要和股價與成交量一起看；若多家媒體都在報導同一題材，代表市場焦點集中，但不等於多個獨立原因同時發生。`,
+    headlineTheme,
+    categories,
+    stocks,
+    count: news.length
+  };
+}
+
+function headlineText(chart: ReturnType<typeof chartContext>, events: ReturnType<typeof eventInsight>) {
+  if (!chart.valid.length) return "今日自選股資料仍在補齊，先等待行情與圖表更新後再判讀整體方向。";
+  const bias = chart.up.length > chart.down.length ? "偏強" : chart.down.length > chart.up.length ? "偏弱" : "震盪";
+  const leader = chart.industries.filter((item) => item.name !== "未分類")[0]?.name;
+  const leadText = leader ? `，主要受${leader}類股影響` : "";
+  return `今日自選股整體${bias}${leadText}；消息焦點集中在${events.headlineTheme}。`;
 }
 
 function localDigest(codes: string[], quotes: Quote[], todayNews: NewsItem[], signals: DailyChartSignal[], targetDate: string): WatchlistDigest {
   const now = new Date();
-  const chart = chartSentence(signals);
-  const eventRows = todayNews.slice(0, 8).map(eventLine);
-  const topEvents = compactJoin(eventRows, 3);
-  const byCode = new Map<string, NewsItem[]>();
-  for (const item of todayNews) {
-    const list = byCode.get(item.code) || [];
-    list.push(item);
-    byCode.set(item.code, list);
-  }
-  const focusedStocks = Array.from(byCode.entries())
-    .sort((a, b) => b[1].length - a[1].length)
-    .slice(0, 3)
-    .map(([code, items]) => `${code} ${items[0]?.company || ""}：${items.slice(0, 2).map((item) => cleanNewsTitle(item)).join("；")}`);
+  const chart = chartContext(signals);
+  const events = eventInsight(todayNews);
+  const headline = cleanVisibleText(headlineText(chart, events));
 
-  const headline = todayNews.length
-    ? `今日自選股抓到 ${todayNews.length} 則當日消息，重點不是只判斷強弱，而是先看事件本身：${topEvents}。${chart.strongest ? `量價上目前相對突出的是 ${chart.strongest.code} ${chart.strongest.name}（${pctText(chart.strongest.changePct)}）。` : ""}`
-    : `今日尚未抓到自選股的明確新聞，先保留既有畫面並改用當日報價與圖表判讀；${chart.breadth}${chart.strongest ? ` 目前相對突出的是 ${chart.strongest.code} ${chart.strongest.name}（${pctText(chart.strongest.changePct)}）。` : ""}`;
-
-  const newsParagraph = todayNews.length
-    ? `今日實際事件：${eventRows.slice(0, 5).join("；")}。這些內容只根據新聞標題、來源與時間整理，若要確認營收數字、訂單金額或公司說法，仍應點原文。`
-    : `今日新聞來源暫時沒有明確事件，因此不硬套利多／利空模板；這一段會改看最新成交價、漲跌幅與成交量，避免把舊消息誤當成今天事件。`;
-
-  const focusParagraph = focusedStocks.length
-    ? `新聞集中度：${focusedStocks.join("；")}。若同一家公司有多則相似標題，可能是同一事件被不同媒體轉載，不能直接解讀成多個獨立事件。`
-    : `自選股今日新聞分散或不足，量價面可先看 ${chart.leader} ${chart.volume}`;
-
-  const chartParagraph = `${chart.breadth}${chart.leader} ${chart.volume} 這是輔助判斷，不取代新聞事件本身。`;
+  const paragraphs = [
+    `整體表現：${breadthText(chart)} ${industryText(chart)}`,
+    `主要事件：${events.themeText} ${events.focusText}`,
+    `資金動向：${leaderText(chart)} 若跌幅較大的個股同時成交量放大，代表市場可能正在重新評估相關題材；相對穩定的 ETF、金融或低波動標的，則可能提供自選股組合支撐。`,
+    `今日關注：優先留意跌幅大、量能放大、且與新聞事件有關的個股；若今日新聞不足，則先看它是否只是跟隨大盤震盪，避免把單日價格波動過度解讀。`
+  ].map(cleanVisibleText);
 
   return {
     headline,
-    paragraphs: [newsParagraph, focusParagraph, chartParagraph],
-    outlook: todayNews.length
-      ? "後續先追蹤上述事件是否有公司公告、法說補充、法人報告或成交量延續；若只有標題沒有細節，介面會保留原文連結，避免摘要自行補不存在的數字。"
-      : "後續等當日新聞補齊後再重新整理；在沒有新聞時，先觀察台積電、聯發科與 ETF 是否同步，以及成交量是否配合放大，不直接下買賣結論。",
-    sourceCount: todayNews.length,
+    paragraphs,
+    outlook: cleanVisibleText("後續觀察外資與投信買賣超、主要支撐與拖累個股是否延續，以及今日新聞是否有公司公告、法說或公開資訊補充。"),
+    sourceCount: events.count,
     chartCount: signals.filter((item) => item.latestClose !== null).length,
     targetDate,
     updatedAt: now.toISOString(),
@@ -205,11 +334,37 @@ function localDigest(codes: string[], quotes: Quote[], todayNews: NewsItem[], si
   };
 }
 
+function sanitizeDigest(value: Partial<WatchlistDigest>, sourceCount: number, chartCount: number, targetDate: string, provider: WatchlistDigest["provider"]): WatchlistDigest {
+  const now = new Date();
+  return {
+    headline: cleanVisibleText(String(value.headline || "今日自選股資料已更新，請查看下方整體表現、主要事件與資金動向。")),
+    paragraphs: Array.isArray(value.paragraphs)
+      ? value.paragraphs.map((item) => cleanVisibleText(String(item))).filter(Boolean).slice(0, 4)
+      : [],
+    outlook: cleanVisibleText(String(value.outlook || "後續觀察主要支撐與拖累個股、成交量是否延續，以及是否有公司公告或法說資料補充。")),
+    sourceCount,
+    chartCount,
+    targetDate,
+    updatedAt: now.toISOString(),
+    nextUpdateAt: new Date(now.getTime() + CACHE_TTL_MS).toISOString(),
+    provider
+  };
+}
+
 async function openAiDigest(codes: string[], quotes: Quote[], todayNews: NewsItem[], signals: DailyChartSignal[], targetDate: string): Promise<WatchlistDigest | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
   const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
   const now = new Date();
+  const preparedNews = dedupeNews(todayNews).slice(0, 60).map((item) => ({
+    code: item.code,
+    company: item.company,
+    title: cleanNewsTitle(item),
+    source: item.source,
+    publishedAt: item.publishedAt,
+    category: item.category || "新聞事件",
+    excerpt: item.excerpt || ""
+  }));
 
   const payload = {
     model,
@@ -217,18 +372,20 @@ async function openAiDigest(codes: string[], quotes: Quote[], todayNews: NewsIte
       {
         role: "system",
         content: [
-          "你是台股資訊整理助理。請整理網站儀表板中的「自選股當日重點」。",
-          "只能以今日新聞與最新日線/報價資料判讀。不要使用近五天或過去新聞當作今日事件。",
-          "最重要：不要套用『強勢／弱勢／資金青睞』模板。headline 與 paragraphs 必須先說明今天實際發生了什麼事，例如公司公告、營收財報、法說、訂單、客戶、產能、股利、法人評等或政策。",
-          "如果今日新聞為 0 則，也必須明說沒有抓到明確當日新聞，再根據最新日線圖表、漲跌幅、成交量與自選股結構做盤勢整理。",
-          "若資料只提供新聞標題，不得捏造標題以外的營收數字、訂單金額、客戶名或公司說法。",
-          "請用繁體中文，語氣像財經資訊摘要，不要提供買賣建議。",
-          "輸出必須是 JSON，欄位為 headline、paragraphs、outlook。"
+          "你是台股資訊整理助理。請整理網站首頁的「自選股當日重點」。",
+          "使用者要的是整個自選股組合今天發生什麼事：整體方向、主要族群、共同事件、支撐/拖累個股、量能變化與後續觀察。",
+          "todayNews 已先篩選為中高以上可信來源，包含官方資訊、中央社、Reuters、Bloomberg、WSJ、FT、經濟日報、工商時報、MoneyDJ、鉅亨網與 Yahoo 股市；不要加入低可信來源或社群傳言。",
+          "headline 只放一句主結論，60 到 110 字，不要把四段內容濃縮重複一次。",
+          "paragraphs 固定 4 段，且依序以『整體表現：』『主要事件：』『資金動向：』『今日關注：』開頭。每段要有事件、原因或觀察，不要只寫偏強/偏弱。",
+          "只能以今日新聞與最新日線/報價資料判讀。若今日新聞為 0 則，明說今日未抓到明確公司新聞，再用量價、漲跌幅、成交量與自選股結構整理。",
+          "不可逐條複製新聞標題，不可把 prompt、內部規則或摘要方法說明寫進摘要。",
+          "若資料只含標題，請保守表述；不得捏造標題以外的營收數字、訂單金額、客戶說法或投資建議。",
+          "outlook 60 到 120 字，聚焦後續觀察事項。"
         ].join("\n")
       },
       {
         role: "user",
-        content: JSON.stringify({ targetDate, codes, quotes, todayNews: todayNews.slice(0, 60), chartSignals: signals }, null, 2)
+        content: JSON.stringify({ targetDate, codes, quotes, todayNews: preparedNews, chartSignals: signals }, null, 2)
       }
     ],
     text: {
@@ -239,9 +396,9 @@ async function openAiDigest(codes: string[], quotes: Quote[], todayNews: NewsIte
           type: "object",
           additionalProperties: false,
           properties: {
-            headline: { type: "string", description: "一段 80-180 字的當日總結。必須包含今天實際事件；若今日無新聞，要明確說明以圖表與行情判讀。" },
-            paragraphs: { type: "array", items: { type: "string" }, description: "3 段補充，每段 50-130 字；至少一段列出具體新聞事件，至少一段說明量價/圖表觀察。" },
-            outlook: { type: "string", description: "一段 60-140 字後續觀察。" }
+            headline: { type: "string" },
+            paragraphs: { type: "array", items: { type: "string" } },
+            outlook: { type: "string" }
           },
           required: ["headline", "paragraphs", "outlook"]
         }
@@ -260,17 +417,7 @@ async function openAiDigest(codes: string[], quotes: Quote[], todayNews: NewsIte
     const content = json.output_text || json.output?.[0]?.content?.[0]?.text;
     if (!content) throw new Error("OpenAI API returned empty content");
     const parsed = JSON.parse(content);
-    return {
-      headline: String(parsed.headline || ""),
-      paragraphs: Array.isArray(parsed.paragraphs) ? parsed.paragraphs.map(String).slice(0, 4) : [],
-      outlook: String(parsed.outlook || ""),
-      sourceCount: todayNews.length,
-      chartCount: signals.filter((item) => item.latestClose !== null).length,
-      targetDate,
-      updatedAt: now.toISOString(),
-      nextUpdateAt: new Date(now.getTime() + CACHE_TTL_MS).toISOString(),
-      provider: "openai"
-    };
+    return sanitizeDigest(parsed, preparedNews.length, signals.filter((item) => item.latestClose !== null).length, targetDate, "openai");
   } catch (error) {
     console.warn("openAiDigest fallback", error);
     return null;
@@ -292,10 +439,12 @@ async function buildDigest(codes: string[], quotes: Quote[]): Promise<WatchlistD
       }
     })
   );
-  const todayNews = newsGroups
-    .flat()
-    .filter((item) => isSameTaiwanDate(item.publishedAt, targetDate))
-    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+  const todayNews = dedupeNews(
+    newsGroups
+      .flat()
+      .filter((item) => isSameTaiwanDate(item.publishedAt, targetDate))
+      .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+  );
 
   const histories = await Promise.all(
     codes.map(async (code) => {
@@ -311,7 +460,8 @@ async function buildDigest(codes: string[], quotes: Quote[]): Promise<WatchlistD
     const quote = quotes.find((q) => q.code === code);
     const master = masters.find((s) => s.code === code);
     const name = quote?.name || master?.shortName || master?.name || code;
-    return buildDailySignal(code, name, quote, historyMap.get(code) || []);
+    const industry = quote?.industry || master?.industry;
+    return buildDailySignal(code, name, industry, quote, historyMap.get(code) || []);
   });
 
   const ai = await openAiDigest(codes, quotes, todayNews, signals, targetDate);
@@ -322,12 +472,13 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const codes = safeCodes(body.watchlist || body.codes);
   const quotes = Array.isArray(body.quotes) ? (body.quotes as Quote[]) : [];
+  const force = Boolean(body.force);
   if (!codes.length) return Response.json({ error: "請提供自選股清單" }, { status: 400 });
 
   const targetDate = taiwanDateString();
   const key = `${targetDate}:${codes.slice().sort().join(",")}`;
   const cached = cache.get(key);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (!force && cached && cached.expiresAt > Date.now()) {
     return Response.json({ data: cached.data, cached: true, ttlHours: 12 }, {
       headers: { "Cache-Control": "s-maxage=43200, stale-while-revalidate=3600" }
     });

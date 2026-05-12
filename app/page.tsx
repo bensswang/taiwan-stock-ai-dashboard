@@ -140,6 +140,18 @@ function formatPctValue(value: number | null | undefined) {
   return `${sign}${value.toFixed(2)}%`;
 }
 
+function splitTextParagraphs(value: string) {
+  return value
+    .split(/\n{2,}|(?<=。)\s+(?=[^。]{10,})/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function sectionLabelParts(value: string) {
+  const match = value.match(/^(整體表現|主要事件|資金動向|今日關注)：(.+)$/);
+  if (!match) return null;
+  return { label: match[1], body: match[2] };
+}
 
 function formatCount(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) return "--";
@@ -199,7 +211,7 @@ function topIndustryText(items: Quote[], limit = 3) {
     const industry = readableIndustry(item.industry);
     industries.set(industry, (industries.get(industry) || 0) + 1);
   }
-  const top = [...industries.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
+  const top = Array.from(industries.entries()).sort((a, b) => b[1] - a[1]).slice(0, limit);
   return top.length ? top.map(([name, count]) => `${name}：${count} 檔`).join("　") : "待資料";
 }
 
@@ -364,6 +376,15 @@ function Badge({ children, tone }: { children: ReactNode; tone?: "up" | "down" |
     >
       {children}
     </span>
+  );
+}
+
+function Spinner({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn("inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent", className)}
+    />
   );
 }
 
@@ -686,6 +707,7 @@ export default function HomePage() {
   const [lastNewsCheck, setLastNewsCheck] = useState<string>("");
   const [watchlistDigest, setWatchlistDigest] = useState<WatchlistDigest>(fallbackWatchlistDigest);
   const [watchlistDigestLoading, setWatchlistDigestLoading] = useState(false);
+  const [refreshingVisibleData, setRefreshingVisibleData] = useState(false);
   const [lastWatchlistDigestCheck, setLastWatchlistDigestCheck] = useState<string>("");
   const searchTimerRef = useRef<number | null>(null);
   const searchSeqRef = useRef(0);
@@ -802,10 +824,8 @@ export default function HomePage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得新聞");
       const nextNews = Array.isArray(json.data) ? json.data : [];
-      if (nextNews.length) {
-        setNews(nextNews);
-        setLastNewsCheck(stamp());
-      }
+      setNews(nextNews);
+      setLastNewsCheck(stamp());
     } catch (err) {
       setError(err instanceof Error ? err.message : "新聞更新失敗，已保留上一筆資料");
     } finally {
@@ -873,7 +893,7 @@ export default function HomePage() {
     }
   }
 
-  async function loadWatchlistDigest(targetWatchlist = watchlist) {
+  async function loadWatchlistDigest(targetWatchlist = watchlist, options?: { force?: boolean }) {
     if (!targetWatchlist.length) {
       setWatchlistDigest(fallbackWatchlistDigest);
       return;
@@ -885,7 +905,8 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           watchlist: targetWatchlist,
-          quotes: quotes.filter((quote) => targetWatchlist.includes(quote.code))
+          quotes: quotes.filter((quote) => targetWatchlist.includes(quote.code)),
+          force: options?.force ?? false
         })
       });
       const json = await res.json();
@@ -902,14 +923,21 @@ export default function HomePage() {
   }
 
   async function refreshVisibleData() {
+    if (refreshingVisibleData) return;
+    setRefreshingVisibleData(true);
     setError(null);
-    await Promise.all([
-      loadQuotes({ silent: false }),
-      loadSelected(selectedCode, { resetAnalysis: false }),
-      loadHistory(selectedCode, range, { silent: false }),
-      loadNews(selectedCode, selectedQuote?.name, { silent: false }),
-      chartMode === "watchlist" ? loadWatchHistories(watchlist, range) : Promise.resolve()
-    ]);
+    try {
+      await Promise.all([
+        loadQuotes({ silent: false }),
+        loadSelected(selectedCode, { resetAnalysis: false }),
+        loadHistory(selectedCode, range, { silent: false }),
+        loadNews(selectedCode, selectedQuote?.name, { silent: false }),
+        chartMode === "watchlist" ? loadWatchHistories(watchlist, range) : Promise.resolve(),
+        loadWatchlistDigest(watchlist, { force: true })
+      ]);
+    } finally {
+      setRefreshingVisibleData(false);
+    }
   }
 
   function selectStock(code: string, name?: string) {
@@ -1040,7 +1068,7 @@ export default function HomePage() {
       const key = readableIndustry(q.industry);
       industries.set(key, (industries.get(key) || 0) + 1);
     }
-    const topIndustry = [...industries.entries()].sort((a, b) => b[1] - a[1])[0] || null;
+    const topIndustry = Array.from(industries.entries()).sort((a, b) => b[1] - a[1])[0] || null;
     return { valid, up, down, flat, missing, strongest, weakest, topIndustry };
   }, [watchQuotes, watchlist]);
 
@@ -1193,8 +1221,16 @@ export default function HomePage() {
             <div className={cn("hidden items-center rounded-full border px-3 py-2 text-xs font-bold md:flex", softPanel)}>
               自動更新：{lastQuoteCheck || "--"}
             </div>
-            <button onClick={refreshVisibleData} className={cn("rounded-full border px-4 py-2 text-sm font-bold", softPanel)}>
-              立即更新
+            <button
+              onClick={refreshVisibleData}
+              disabled={refreshingVisibleData}
+              className={cn(
+                "inline-flex items-center justify-center gap-2 rounded-full border px-4 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-70",
+                softPanel
+              )}
+            >
+              {refreshingVisibleData && <Spinner />}
+              {refreshingVisibleData ? "更新中" : "立即更新"}
             </button>
             <button onClick={() => setTheme(isDark ? "light" : "dark")} className={cn("rounded-full border px-4 py-2 text-sm font-medium", softPanel)}>
               {isDark ? "淺色" : "深色"}
@@ -1406,12 +1442,12 @@ export default function HomePage() {
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
                 <h2 className="text-xl font-bold">自選股當日重點</h2>
-                <p className={cn("mt-1 text-sm", muted)}>以新聞事件與當日圖表為主，不套用固定強弱模板。</p>
+                <p className={cn("mt-1 text-sm", muted)}>整合當日新聞、量價與自選股結構。</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Badge>{watchlist.length} 檔自選</Badge>
                 <Badge tone="warn">{watchlistDigestLoading ? "AI整理中" : "自動12小時"}</Badge>
-                <Badge>今日 {watchlistDigest.sourceCount ?? 0} 則新聞</Badge>
+                <Badge>今日 {watchlistDigest.sourceCount ?? 0} 則可信新聞</Badge>
                 <Badge>{watchlistDigest.chartCount ?? 0} 檔圖表</Badge>
               </div>
             </div>
@@ -1421,11 +1457,16 @@ export default function HomePage() {
                 <span className={cn("inline-flex rounded-2xl px-3 py-1.5 text-sm font-black", isDark ? "bg-cyan-400/15 text-cyan-300" : "bg-cyan-50 text-cyan-600")}>AI 摘要</span>
                 <span className={cn("text-sm font-semibold", muted)}>日期：{watchlistDigest.targetDate || "今日"}｜更新：{lastWatchlistDigestCheck || "--"}</span>
               </div>
-              <p className="mt-5 text-lg font-semibold leading-9 md:text-[1.65rem] md:leading-[3.2rem]">{watchlistDigest.headline}</p>
-              <div className="mt-5 space-y-4 text-[15px] leading-8 md:text-base">
-                {watchlistDigest.paragraphs.map((paragraph) => (
-                  <p key={paragraph} className={muted}>{paragraph}</p>
-                ))}
+              <p className="mt-5 text-xl font-black leading-9 md:text-2xl md:leading-10">{watchlistDigest.headline}</p>
+              <div className="mt-5 grid gap-3 text-[15px] leading-8 md:text-base">
+                {watchlistDigest.paragraphs.map((paragraph) => {
+                  const parts = sectionLabelParts(paragraph);
+                  return (
+                    <p key={paragraph} className={muted}>
+                      {parts ? <><span className={cn("font-bold", isDark ? "text-white" : "text-slate-900")}>{parts.label}：</span>{parts.body}</> : paragraph}
+                    </p>
+                  );
+                })}
               </div>
             </div>
 
@@ -1438,11 +1479,12 @@ export default function HomePage() {
           <div className={cn("rounded-[2rem] border p-5", panel)}>
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
-                <h2 className="text-xl font-bold">{selectedCompanyName} 近五天新聞與當日重點</h2>
-                <p className={cn("mt-1 text-sm", muted)}>優先整理實際事件，不只判斷強勢或弱勢。更新：{lastNewsCheck || "--"}</p>
+                <h2 className="text-xl font-bold">{selectedCompanyName} 近五天可信新聞與當日重點</h2>
+                <p className={cn("mt-1 text-sm", muted)}>只納入中高以上可信來源，整合近五天新聞、今日事件與量價反應。更新：{lastNewsCheck || "--"}</p>
               </div>
-              <button onClick={analyzeNews} disabled={loading.analysis || !news.length} className="rounded-full bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
-                {loading.analysis ? "整理事件中" : "整理近五天與當日重點"}
+              <button onClick={analyzeNews} disabled={loading.analysis || !news.length} className="inline-flex items-center justify-center gap-2 rounded-full bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
+                {loading.analysis && <Spinner />}
+                {loading.analysis ? "整理事件中" : "整理可信新聞與當日重點"}
               </button>
             </div>
 
@@ -1451,26 +1493,24 @@ export default function HomePage() {
                 <div className={cn("border-b p-5", isDark ? "border-white/10 bg-cyan-400/10" : "border-cyan-100 bg-cyan-50")}>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={analysis.tone.includes("多") ? "up" : analysis.tone.includes("空") ? "down" : "warn"}>{analysis.tone}</Badge>
-                    
+                    <Badge>{analysis.sourceCount} 則可信新聞</Badge>
                   </div>
                   <h3 className="mt-3 text-2xl font-black">新聞摘要</h3>
-                  <p className={cn("mt-3 text-lg leading-9 md:text-xl", muted)}>{analysis.summary}</p>
+                  <div className={cn("mt-3 space-y-4 text-lg leading-9 md:text-xl", muted)}>
+                    {splitTextParagraphs(analysis.summary).map((paragraph) => (
+                      <p key={paragraph}>{paragraph}</p>
+                    ))}
+                  </div>
                 </div>
 
-                <div className="grid gap-4 p-5 md:grid-cols-2">
-                  <div className={cn("rounded-3xl border p-4", softPanel)}>
-                    <p className="font-bold text-cyan-500">近期重點</p>
-                    <ul className="mt-3 list-disc space-y-3 pl-5 text-lg leading-8">
+                {analysis.keyPoints.length > 0 && (
+                  <div className="p-5">
+                    <p className="font-bold text-cyan-500">整理重點</p>
+                    <ul className="mt-3 list-disc space-y-3 pl-5 text-base leading-8 md:text-lg">
                       {analysis.keyPoints.map((item) => <li key={item}>{item}</li>)}
                     </ul>
                   </div>
-                  <div className={cn("rounded-3xl border p-4", softPanel)}>
-                    <p className="font-bold text-amber-500">風險提醒</p>
-                    <ul className="mt-3 list-disc space-y-3 pl-5 text-lg leading-8">
-                      {analysis.risks.map((item) => <li key={item}>{item}</li>)}
-                    </ul>
-                  </div>
-                </div>
+                )}
               </div>
             )}
 
@@ -1480,6 +1520,7 @@ export default function HomePage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge>{item.code} {item.company}</Badge>
                     <Badge>{item.category || "新聞"}</Badge>
+                    {item.sourceTier && <Badge tone={item.sourceTier === "最高" ? "up" : item.sourceTier === "高" ? "warn" : undefined}>{item.sourceTier}可信</Badge>}
                     <span className={cn("text-xs", muted)}>{new Date(item.publishedAt).toLocaleString("zh-TW")} / {item.source}</span>
                   </div>
                   <h3 className="mt-3 font-bold leading-6">{item.title}</h3>
@@ -1488,7 +1529,7 @@ export default function HomePage() {
                     <a href={item.url} target="_blank" rel="noreferrer" className="rounded-full bg-slate-950 px-3 py-1.5 text-xs font-bold text-white dark:bg-white dark:text-slate-950">開啟原文</a>
                   </div>
                 </article>
-              )) : <EmptyState title="暫無相關新聞" />}
+              )) : <EmptyState title="近五天暫無中高以上可信來源新聞" /> }
             </div>
 
             <div className={cn("mt-6 rounded-3xl border p-5", softPanel)}>

@@ -49,6 +49,9 @@ export interface NewsItem {
   url: string;
   excerpt?: string;
   category?: string;
+  sourceTier?: "最高" | "高" | "中高";
+  sourceLabel?: string;
+  sourceUrl?: string;
 }
 
 export interface AiAnalysis {
