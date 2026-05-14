@@ -25,6 +25,13 @@ type WatchlistDigest = {
   provider?: "openai" | "local-rules";
 };
 
+type AiStatus = {
+  configured: boolean;
+  mode: "openai" | "missing-key";
+  model: string | null;
+  checkedAt?: string;
+};
+
 type FuturesPoint = {
   date: string;
   label: string;
@@ -77,12 +84,12 @@ const WATCHLIST_DIGEST_REFRESH_MS = 12 * 60 * 60 * 1000;
 
 const fallbackWatchlistDigest: WatchlistDigest = {
   headline:
-    "今日尚未取得即時摘要；先以最新行情、漲跌幅與成交量判讀自選股狀態。",
+    "自選股 AI 摘要尚未產生；請先確認 OpenAI API Key 已設定，或按「立即更新」重新整理。",
   paragraphs: [
-    "今日新聞不足時，系統會改看自選股當日量價、強弱個股，以及 ETF 與權值股是否同步。"
+    "AI 摘要現在只會使用 OpenAI 產生；若未設定 OPENAI_API_KEY，不會再用本地模板假裝成 AI 摘要。"
   ],
   outlook:
-    "後續留意台積電、聯發科、0050、00631L 與高股息 ETF 是否同步。",
+    "設定 API Key 後重新部署，再回到網站按立即更新即可。",
   sourceCount: 0,
   chartCount: 0
 };
@@ -709,6 +716,7 @@ export default function HomePage() {
   const [watchlistDigestLoading, setWatchlistDigestLoading] = useState(false);
   const [refreshingVisibleData, setRefreshingVisibleData] = useState(false);
   const [lastWatchlistDigestCheck, setLastWatchlistDigestCheck] = useState<string>("");
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const searchTimerRef = useRef<number | null>(null);
   const searchSeqRef = useRef(0);
 
@@ -717,9 +725,22 @@ export default function HomePage() {
   const softPanel = isDark ? "border-white/10 bg-white/[0.04]" : "border-slate-200 bg-slate-50";
   const muted = isDark ? "text-slate-400" : "text-slate-500";
   const input = isDark ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-950";
+  const aiConfigured = aiStatus?.configured === true;
+  const aiModeLabel = aiStatus ? (aiStatus.configured ? `OpenAI${aiStatus.model ? ` / ${aiStatus.model}` : ""}` : "未設定 API Key") : "檢查中";
 
   function stamp() {
     return new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  }
+
+  async function loadAiStatus() {
+    try {
+      const res = await fetch("/api/ai/status", { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "AI 狀態檢查失敗");
+      setAiStatus(json);
+    } catch {
+      setAiStatus({ configured: false, mode: "missing-key", model: null });
+    }
   }
 
   async function loadQuotes(options?: { silent?: boolean }) {
@@ -875,6 +896,10 @@ export default function HomePage() {
   }
 
   async function analyzeNews() {
+    if (!aiConfigured) {
+      setError("尚未設定 OPENAI_API_KEY；請先到 Netlify 設定環境變數並重新部署。AI 摘要不會使用本地模板替代。");
+      return;
+    }
     setLoading((prev) => ({ ...prev, analysis: true }));
     setAnalysis(null);
     try {
@@ -896,6 +921,19 @@ export default function HomePage() {
   async function loadWatchlistDigest(targetWatchlist = watchlist, options?: { force?: boolean }) {
     if (!targetWatchlist.length) {
       setWatchlistDigest(fallbackWatchlistDigest);
+      return;
+    }
+    if (aiStatus === null) return;
+    if (!aiConfigured) {
+      setWatchlistDigest({
+        headline: "尚未設定 OpenAI API Key；自選股 AI 摘要暫停，行情、圖表與可信新聞仍可正常更新。",
+        paragraphs: [
+          "請到 Netlify 的 Environment variables 新增 OPENAI_API_KEY，scope 需包含 Functions，重新部署後這裡才會顯示真正的 OpenAI 摘要。"
+        ],
+        outlook: "設定完成後按立即更新，或等待下一次自動更新。",
+        sourceCount: 0,
+        chartCount: 0
+      });
       return;
     }
     setWatchlistDigestLoading(true);
@@ -976,6 +1014,7 @@ export default function HomePage() {
     if (storedWatch) {
       try { setWatchlist(JSON.parse(storedWatch)); } catch {}
     }
+    loadAiStatus();
     loadQuotes();
     loadSelected(selectedCode);
     loadHistory(selectedCode, range);
@@ -1014,11 +1053,12 @@ export default function HomePage() {
   }, [quotes, selectedCode]);
 
   useEffect(() => {
+    if (aiStatus === null) return;
     loadWatchlistDigest(watchlist);
     const timer = window.setInterval(() => loadWatchlistDigest(watchlist), WATCHLIST_DIGEST_REFRESH_MS);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchlist.join(",")]);
+  }, [watchlist.join(","), aiStatus?.configured]);
 
   useEffect(() => {
     const timer = window.setInterval(() => loadNews(selectedCode, selectedQuote?.name, { silent: true }), NEWS_REFRESH_MS);
@@ -1220,6 +1260,9 @@ export default function HomePage() {
             )}
             <div className={cn("hidden items-center rounded-full border px-3 py-2 text-xs font-bold md:flex", softPanel)}>
               自動更新：{lastQuoteCheck || "--"}
+            </div>
+            <div className={cn("hidden items-center rounded-full border px-3 py-2 text-xs font-bold md:flex", aiConfigured ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300" : "border-amber-400/30 bg-amber-400/10 text-amber-400")}>
+              AI 模式：{aiModeLabel}
             </div>
             <button
               onClick={refreshVisibleData}
@@ -1446,6 +1489,7 @@ export default function HomePage() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <Badge>{watchlist.length} 檔自選</Badge>
+                <Badge tone={aiConfigured ? "up" : "warn"}>AI：{aiModeLabel}</Badge>
                 <Badge tone="warn">{watchlistDigestLoading ? "AI整理中" : "自動12小時"}</Badge>
                 <Badge>今日 {watchlistDigest.sourceCount ?? 0} 則可信新聞</Badge>
                 <Badge>{watchlistDigest.chartCount ?? 0} 檔圖表</Badge>
@@ -1480,11 +1524,11 @@ export default function HomePage() {
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
                 <h2 className="text-xl font-bold">{selectedCompanyName} 近五天可信新聞與當日重點</h2>
-                <p className={cn("mt-1 text-sm", muted)}>只納入中高以上可信來源，整合近五天新聞、今日事件與量價反應。更新：{lastNewsCheck || "--"}</p>
+                <p className={cn("mt-1 text-sm", muted)}>只納入中高以上可信來源，整合近五天新聞、今日事件與量價反應。AI 模式：{aiModeLabel}｜更新：{lastNewsCheck || "--"}</p>
               </div>
-              <button onClick={analyzeNews} disabled={loading.analysis || !news.length} className="inline-flex items-center justify-center gap-2 rounded-full bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
+              <button onClick={analyzeNews} disabled={loading.analysis || !news.length || !aiConfigured} className="inline-flex items-center justify-center gap-2 rounded-full bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
                 {loading.analysis && <Spinner />}
-                {loading.analysis ? "整理事件中" : "整理可信新聞與當日重點"}
+                {loading.analysis ? "整理事件中" : aiConfigured ? "整理可信新聞與當日重點" : "尚未設定 API Key"}
               </button>
             </div>
 
@@ -1493,6 +1537,7 @@ export default function HomePage() {
                 <div className={cn("border-b p-5", isDark ? "border-white/10 bg-cyan-400/10" : "border-cyan-100 bg-cyan-50")}>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={analysis.tone.includes("多") ? "up" : analysis.tone.includes("空") ? "down" : "warn"}>{analysis.tone}</Badge>
+                    <Badge tone="up">OpenAI 摘要</Badge>
                     <Badge>{analysis.sourceCount} 則可信新聞</Badge>
                   </div>
                   <h3 className="mt-3 text-2xl font-black">新聞摘要</h3>

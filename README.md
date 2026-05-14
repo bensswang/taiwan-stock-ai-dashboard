@@ -169,10 +169,10 @@ body:
 
 ```bash
 OPENAI_API_KEY=你的金鑰
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4.1-mini
 ```
 
-沒有設定 `OPENAI_API_KEY` 時，`/api/ai/analyze` 會使用本地規則式摘要，不會失敗。
+沒有設定 `OPENAI_API_KEY` 時，AI 摘要 API 會直接回傳錯誤；網站不會再使用本地規則式摘要假裝成 AI 摘要。
 
 ---
 
@@ -251,7 +251,7 @@ OPENAI_MODEL=gpt-4o-mini
 ## V18 更新重點
 
 - 「自選股近期重點」改為每 12 小時重新整理一次 AI 摘要，資料來自全部自選股近五天新聞與自選股行情。
-- 新增 `/api/ai/watchlist`，會合併自選股新聞後產生摘要；若有 `OPENAI_API_KEY` 則使用 AI 模型，否則使用本地規則摘要備援。
+- 新增 `/api/ai/watchlist`，會合併自選股新聞後產生摘要；必須設定 `OPENAI_API_KEY` 才會產生 AI 摘要；未設定時會在前端顯示「尚未設定 API Key」。
 - 「台灣加權指數」與「台指期盤前盤後走勢」上下順序交換，台灣加權指數放在上方。
 - 「台灣加權指數」標題字樣加大。
 
@@ -262,3 +262,8 @@ OPENAI_MODEL=gpt-4o-mini
 - 摘要只納入當日新聞，不再用近五天新聞混合判讀。
 - 若當日沒有自選股新聞，系統會改用最新日線圖表、漲跌幅、成交量與自選股結構產生 AI 摘要。
 - 自選股當日重點仍維持每 12 小時更新一次，版面維持 V18 的摘要樣式。
+
+
+## V24 OpenAI API 設定
+
+AI 摘要現在必須使用 OpenAI API Key。請在 Netlify 的 Environment variables 新增 `OPENAI_API_KEY`，scope 需包含 Functions，設定後重新部署。請不要把真實 key 寫進 GitHub 或前端程式。

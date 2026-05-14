@@ -5,6 +5,17 @@ import { getNewsByStock } from "@/lib/news";
 import { getAllStockMaster, getTwseHistory } from "@/lib/twse";
 import type { NewsItem, PricePoint, Quote } from "@/lib/types";
 
+function getRuntimeEnv(name: string) {
+  return process.env[name] || (globalThis as any).Netlify?.env?.get?.(name) || "";
+}
+
+function missingOpenAiJson() {
+  return Response.json({
+    error: "尚未設定 OPENAI_API_KEY。請到 Netlify Environment variables 新增 OPENAI_API_KEY，scope 需包含 Functions，重新部署後再使用自選股 AI 摘要。",
+    code: "OPENAI_API_KEY_MISSING"
+  }, { status: 503, headers: { "Cache-Control": "no-store" } });
+}
+
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 type WatchlistDigest = {
@@ -352,9 +363,9 @@ function sanitizeDigest(value: Partial<WatchlistDigest>, sourceCount: number, ch
 }
 
 async function openAiDigest(codes: string[], quotes: Quote[], todayNews: NewsItem[], signals: DailyChartSignal[], targetDate: string): Promise<WatchlistDigest | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = getRuntimeEnv("OPENAI_API_KEY");
   if (!apiKey) return null;
-  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const model = getRuntimeEnv("OPENAI_MODEL") || "gpt-4.1-mini";
   const now = new Date();
   const preparedNews = dedupeNews(todayNews).slice(0, 60).map((item) => ({
     code: item.code,
@@ -419,7 +430,7 @@ async function openAiDigest(codes: string[], quotes: Quote[], todayNews: NewsIte
     const parsed = JSON.parse(content);
     return sanitizeDigest(parsed, preparedNews.length, signals.filter((item) => item.latestClose !== null).length, targetDate, "openai");
   } catch (error) {
-    console.warn("openAiDigest fallback", error);
+    console.warn("openAiDigest failed", error);
     return null;
   }
 }
@@ -465,10 +476,15 @@ async function buildDigest(codes: string[], quotes: Quote[]): Promise<WatchlistD
   });
 
   const ai = await openAiDigest(codes, quotes, todayNews, signals, targetDate);
-  return ai || localDigest(codes, quotes, todayNews, signals, targetDate);
+  if (!ai) {
+    throw new Error("OpenAI 自選股摘要暫時失敗，系統不會再用本地模板假裝成 AI 摘要。");
+  }
+  return ai;
 }
 
 export async function POST(request: Request) {
+  if (!getRuntimeEnv("OPENAI_API_KEY")) return missingOpenAiJson();
+
   const body = await request.json().catch(() => ({}));
   const codes = safeCodes(body.watchlist || body.codes);
   const quotes = Array.isArray(body.quotes) ? (body.quotes as Quote[]) : [];
@@ -484,9 +500,14 @@ export async function POST(request: Request) {
     });
   }
 
-  const data = await buildDigest(codes, quotes);
-  cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
-  return Response.json({ data, cached: false, ttlHours: 12 }, {
-    headers: { "Cache-Control": "s-maxage=43200, stale-while-revalidate=3600" }
-  });
+  try {
+    const data = await buildDigest(codes, quotes);
+    cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+    return Response.json({ data, cached: false, ttlHours: 12 }, {
+      headers: { "Cache-Control": "s-maxage=43200, stale-while-revalidate=3600" }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "OpenAI 自選股摘要暫時失敗";
+    return Response.json({ error: message, code: "OPENAI_API_FAILED" }, { status: 502, headers: { "Cache-Control": "no-store" } });
+  }
 }

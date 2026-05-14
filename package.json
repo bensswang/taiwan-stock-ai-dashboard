@@ -1,6 +1,6 @@
 {
-  "name": "taiwan-stock-news-board-v23",
-  "version": "23.0.0",
+  "name": "taiwan-stock-news-board-v24",
+  "version": "24.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",

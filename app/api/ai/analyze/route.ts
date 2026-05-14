@@ -1,5 +1,19 @@
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 import { safeJsonResponse } from "@/lib/format";
 import type { AiAnalysis, NewsItem, Quote } from "@/lib/types";
+
+function getRuntimeEnv(name: string) {
+  return process.env[name] || (globalThis as any).Netlify?.env?.get?.(name) || "";
+}
+
+function missingOpenAiResponse() {
+  return safeJsonResponse({
+    error: "尚未設定 OPENAI_API_KEY。請到 Netlify Environment variables 新增 OPENAI_API_KEY，scope 需包含 Functions，重新部署後再使用 AI 摘要。",
+    code: "OPENAI_API_KEY_MISSING"
+  }, { status: 503, headers: { "Cache-Control": "no-store" } });
+}
 
 const toneValues: AiAnalysis["tone"][] = ["偏多", "中性偏多", "中性", "中性偏空", "偏空"];
 
@@ -268,9 +282,9 @@ function sanitizeAnalysis(value: Partial<AiAnalysis>, sourceCount: number, provi
 }
 
 async function openAiAnalyze(stock: Quote | null, news: NewsItem[]): Promise<AiAnalysis | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = getRuntimeEnv("OPENAI_API_KEY");
   if (!apiKey) return null;
-  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const model = getRuntimeEnv("OPENAI_MODEL") || "gpt-4.1-mini";
   const preparedNews = dedupeEvents(recentNews(news, 5)).slice(0, 12).map((item) => ({
     title: normalizeTitle(item.title, item.source),
     source: item.source,
@@ -333,15 +347,25 @@ async function openAiAnalyze(stock: Quote | null, news: NewsItem[]): Promise<AiA
     const parsed = JSON.parse(content);
     return sanitizeAnalysis(parsed, preparedNews.length, "openai");
   } catch (error) {
-    console.warn("openAiAnalyze fallback", error);
+    console.warn("openAiAnalyze failed", error);
     return null;
   }
 }
 
 export async function POST(request: Request) {
+  if (!getRuntimeEnv("OPENAI_API_KEY")) return missingOpenAiResponse();
+
   const body = await request.json().catch(() => ({}));
   const stock = (body.stock || null) as Quote | null;
   const news = Array.isArray(body.news) ? (body.news as NewsItem[]) : [];
   const ai = await openAiAnalyze(stock, news);
-  return safeJsonResponse({ data: ai || localAnalyze(stock, news) });
+
+  if (!ai) {
+    return safeJsonResponse({
+      error: "OpenAI 摘要暫時失敗，請稍後再試；系統不會再用本地模板假裝成 AI 摘要。",
+      code: "OPENAI_API_FAILED"
+    }, { status: 502, headers: { "Cache-Control": "no-store" } });
+  }
+
+  return safeJsonResponse({ data: ai }, { headers: { "Cache-Control": "no-store" } });
 }
