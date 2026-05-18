@@ -1,20 +1,25 @@
 import { safeJsonResponse } from "@/lib/format";
 import { getNewsByStock } from "@/lib/news";
-import { getTwseListedStocks } from "@/lib/twse";
+import { getAllStockMaster } from "@/lib/twse";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const code = searchParams.get("code")?.trim();
+  const codeParam = searchParams.get("code")?.trim().toUpperCase();
   const companyParam = searchParams.get("company")?.trim();
   const daysParam = Number(searchParams.get("days") || 5);
   const days = Number.isFinite(daysParam) ? Math.min(Math.max(daysParam, 1), 30) : 5;
 
-  if (!code && !companyParam) return safeJsonResponse({ error: "請提供 code 或 company" }, { status: 400 });
+  if (!codeParam && !companyParam) return safeJsonResponse({ error: "請提供 code 或 company" }, { status: 400 });
 
-  const stocks = await getTwseListedStocks();
-  const stock = code ? stocks.find((s) => s.code === code) : undefined;
-  const company = companyParam || stock?.shortName || stock?.name || code || "台股";
-  const data = await getNewsByStock(code || stock?.code || "TW", company, days);
+  const stocks = await getAllStockMaster();
+  const stock = codeParam
+    ? stocks.find((s) => s.code === codeParam)
+    : stocks.find((s) => [s.shortName, s.name, ...(s.aliases || [])].some((name) => name && companyParam && name.includes(companyParam)));
 
-  return safeJsonResponse({ code: code || stock?.code || null, company, days, count: data.length, data });
+  // 有 code 時，以股票主檔為準，避免前端殘留舊公司名稱時抓到上一支股票的新聞。
+  const finalCode = codeParam || stock?.code || "TW";
+  const company = stock?.shortName || stock?.name || companyParam || finalCode || "台股";
+  const data = await getNewsByStock(finalCode, company, days);
+
+  return safeJsonResponse({ code: finalCode, company, days, count: data.length, data });
 }

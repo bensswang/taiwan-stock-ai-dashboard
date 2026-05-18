@@ -81,18 +81,56 @@ const SELECTED_REFRESH_MS = 30_000;
 const CHART_REFRESH_MS = 5 * 60 * 1000;
 const NEWS_REFRESH_MS = 60 * 60 * 1000;
 const WATCHLIST_DIGEST_REFRESH_MS = 12 * 60 * 60 * 1000;
+const WATCHLIST_DIGEST_STORAGE_KEY = "tw-stock-watchlist-digest-cache-v1";
 
 const fallbackWatchlistDigest: WatchlistDigest = {
   headline:
-    "自選股 AI 摘要尚未產生；請先確認 Groq API Key 已設定，或按「立即更新」重新整理。",
+    "自選股 AI 摘要尚未產生；請先確認 Groq API Key 已設定，或按「重新整理」重新整理。",
   paragraphs: [
     "AI 摘要現在只會使用 Groq 產生；若未設定 GROQ_API_KEY，不會再用本地模板假裝成 AI 摘要。"
   ],
   outlook:
-    "設定 API Key 後重新部署，再回到網站按立即更新即可。",
+    "設定 API Key 後重新部署，再回到網站按頁面上方「重新整理」即可。",
   sourceCount: 0,
   chartCount: 0
 };
+
+
+type WatchlistDigestCachePayload = {
+  data: WatchlistDigest;
+  savedAt: string;
+  expiresAt: string;
+};
+
+function formatTimeFromIso(value?: string | null) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+function readWatchlistDigestCache(): WatchlistDigestCachePayload | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(WATCHLIST_DIGEST_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<WatchlistDigestCachePayload>;
+    const expiresAt = parsed.expiresAt ? new Date(parsed.expiresAt).getTime() : 0;
+    if (!parsed.data?.headline || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null;
+    return parsed as WatchlistDigestCachePayload;
+  } catch {
+    return null;
+  }
+}
+
+function saveWatchlistDigestCache(data: WatchlistDigest) {
+  if (typeof window === "undefined") return;
+  try {
+    const savedAt = new Date().toISOString();
+    const expiresAt = data.nextUpdateAt || new Date(Date.now() + WATCHLIST_DIGEST_REFRESH_MS).toISOString();
+    window.localStorage.setItem(WATCHLIST_DIGEST_STORAGE_KEY, JSON.stringify({ data, savedAt, expiresAt }));
+  } catch {}
+}
 
 const chartColors = ["#22d3ee", "#a78bfa", "#f59e0b", "#ef4444", "#10b981", "#6366f1", "#ec4899", "#14b8a6"];
 
@@ -719,6 +757,12 @@ export default function HomePage() {
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const searchTimerRef = useRef<number | null>(null);
   const searchSeqRef = useRef(0);
+  const selectedCodeRef = useRef(selectedCode);
+  const selectedQuoteSeqRef = useRef(0);
+  const historySeqRef = useRef(0);
+  const newsSeqRef = useRef(0);
+  const watchlistRef = useRef<string[]>(defaultWatchlist);
+  const quotesRef = useRef<Quote[]>([]);
 
   const isDark = theme === "dark";
   const panel = isDark ? "border-white/10 bg-slate-900/85" : "border-slate-200 bg-white";
@@ -765,6 +809,8 @@ export default function HomePage() {
   }
 
   async function loadSelected(code: string, options: boolean | { silent?: boolean; resetAnalysis?: boolean } = true) {
+    const normalizedCode = code.trim().toUpperCase();
+    const requestSeq = ++selectedQuoteSeqRef.current;
     const silent = typeof options === "boolean" ? false : options.silent ?? false;
     const resetAnalysis = typeof options === "boolean" ? options : options.resetAnalysis ?? true;
     if (!silent && !selectedQuote) {
@@ -772,32 +818,46 @@ export default function HomePage() {
     }
     if (resetAnalysis) setAnalysis(null);
     try {
-      const res = await fetch(`/api/stocks/quote?code=${encodeURIComponent(code)}`, { cache: "no-store" });
+      const res = await fetch(`/api/stocks/quote?code=${encodeURIComponent(normalizedCode)}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得個股資料");
-      if (json.data) setSelectedQuote(json.data);
+      if (json.data && requestSeq === selectedQuoteSeqRef.current && selectedCodeRef.current === normalizedCode) {
+        setSelectedQuote(json.data);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "個股更新失敗，已保留上一筆資料");
+      if (requestSeq === selectedQuoteSeqRef.current && selectedCodeRef.current === normalizedCode) {
+        setError(err instanceof Error ? err.message : "個股更新失敗，已保留上一筆資料");
+      }
     } finally {
-      setLoading((prev) => ({ ...prev, selected: false }));
+      if (requestSeq === selectedQuoteSeqRef.current) {
+        setLoading((prev) => ({ ...prev, selected: false }));
+      }
     }
   }
 
   async function loadHistory(code: string, selectedRange: RangeKey, options?: { silent?: boolean }) {
+    const normalizedCode = code.trim().toUpperCase();
+    const requestSeq = ++historySeqRef.current;
     const silent = options?.silent ?? false;
     if (!silent && history.length === 0) {
       setLoading((prev) => ({ ...prev, history: true }));
     }
     try {
-      const res = await fetch(`/api/stocks/history?code=${encodeURIComponent(code)}&range=${selectedRange}`, { cache: "no-store" });
+      const res = await fetch(`/api/stocks/history?code=${encodeURIComponent(normalizedCode)}&range=${selectedRange}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得歷史資料");
       const nextHistory = Array.isArray(json.data) ? json.data : [];
-      if (nextHistory.length) setHistory(nextHistory);
+      if (requestSeq === historySeqRef.current && selectedCodeRef.current === normalizedCode) {
+        setHistory(nextHistory);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "趨勢圖更新失敗，已保留上一筆資料");
+      if (requestSeq === historySeqRef.current && selectedCodeRef.current === normalizedCode) {
+        setError(err instanceof Error ? err.message : "趨勢圖更新失敗，已保留上一筆資料");
+      }
     } finally {
-      setLoading((prev) => ({ ...prev, history: false }));
+      if (requestSeq === historySeqRef.current) {
+        setLoading((prev) => ({ ...prev, history: false }));
+      }
     }
   }
 
@@ -834,23 +894,34 @@ export default function HomePage() {
   }
 
   async function loadNews(code: string, company?: string, options?: { silent?: boolean }) {
+    const normalizedCode = code.trim().toUpperCase();
+    const requestSeq = ++newsSeqRef.current;
     const silent = options?.silent ?? false;
-    if (!silent && news.length === 0) {
+    if (!silent) {
       setLoading((prev) => ({ ...prev, news: true }));
+      setNews([]);
+      setAnalysis(null);
+      setLastNewsCheck("");
     }
     try {
-      const params = new URLSearchParams({ code, days: "5" });
+      const params = new URLSearchParams({ code: normalizedCode, days: "5" });
       if (company) params.set("company", company);
       const res = await fetch(`/api/news?${params.toString()}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得新聞");
       const nextNews = Array.isArray(json.data) ? json.data : [];
-      setNews(nextNews);
-      setLastNewsCheck(stamp());
+      if (requestSeq === newsSeqRef.current && selectedCodeRef.current === normalizedCode) {
+        setNews(nextNews);
+        setLastNewsCheck(stamp());
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "新聞更新失敗，已保留上一筆資料");
+      if (requestSeq === newsSeqRef.current && selectedCodeRef.current === normalizedCode) {
+        setError(err instanceof Error ? err.message : "新聞更新失敗，已保留上一筆資料");
+      }
     } finally {
-      setLoading((prev) => ({ ...prev, news: false }));
+      if (requestSeq === newsSeqRef.current) {
+        setLoading((prev) => ({ ...prev, news: false }));
+      }
     }
   }
 
@@ -918,8 +989,11 @@ export default function HomePage() {
     }
   }
 
-  async function loadWatchlistDigest(targetWatchlist = watchlist, options?: { force?: boolean }) {
-    if (!targetWatchlist.length) {
+  async function loadWatchlistDigest(targetWatchlist?: string[], options?: { force?: boolean }) {
+    const activeWatchlist = (targetWatchlist?.length ? targetWatchlist : watchlistRef.current).slice();
+    const force = options?.force ?? false;
+
+    if (!activeWatchlist.length) {
       setWatchlistDigest(fallbackWatchlistDigest);
       return;
     }
@@ -930,28 +1004,40 @@ export default function HomePage() {
         paragraphs: [
           "請到 Netlify 的 Environment variables 新增 GROQ_API_KEY，scope 需包含 Functions，重新部署後這裡才會顯示真正的 Groq 摘要。"
         ],
-        outlook: "設定完成後按立即更新，或等待下一次自動更新。",
+        outlook: "設定完成後按頁面上方「重新整理」，或等待下一次 12 小時自動整理。",
         sourceCount: 0,
         chartCount: 0
       });
       return;
     }
+
+    if (!force) {
+      const cached = readWatchlistDigestCache();
+      if (cached) {
+        setWatchlistDigest(cached.data);
+        setLastWatchlistDigestCheck(formatTimeFromIso(cached.data.updatedAt || cached.savedAt) || "已快取");
+        return;
+      }
+    }
+
     setWatchlistDigestLoading(true);
     try {
+      const activeQuotes = quotesRef.current;
       const res = await fetch("/api/ai/watchlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          watchlist: targetWatchlist,
-          quotes: quotes.filter((quote) => targetWatchlist.includes(quote.code)),
-          force: options?.force ?? false
+          watchlist: activeWatchlist,
+          quotes: activeQuotes.filter((quote) => activeWatchlist.includes(quote.code)),
+          force
         })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "自選股 AI 摘要失敗");
       if (json.data?.headline) {
         setWatchlistDigest(json.data);
-        setLastWatchlistDigestCheck(stamp());
+        saveWatchlistDigestCache(json.data);
+        setLastWatchlistDigestCheck(formatTimeFromIso(json.data.updatedAt) || stamp());
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "自選股 AI 摘要更新失敗，已保留上一筆整理");
@@ -969,9 +1055,9 @@ export default function HomePage() {
         loadQuotes({ silent: false }),
         loadSelected(selectedCode, { resetAnalysis: false }),
         loadHistory(selectedCode, range, { silent: false }),
-        loadNews(selectedCode, selectedQuote?.name, { silent: false }),
-        chartMode === "watchlist" ? loadWatchHistories(watchlist, range) : Promise.resolve(),
-        loadWatchlistDigest(watchlist, { force: true })
+        loadNews(selectedCodeRef.current, selectedQuote?.name, { silent: false }),
+        chartMode === "watchlist" ? loadWatchHistories(watchlistRef.current, range) : Promise.resolve(),
+        loadWatchlistDigest(watchlistRef.current, { force: true })
       ]);
     } finally {
       setRefreshingVisibleData(false);
@@ -979,12 +1065,21 @@ export default function HomePage() {
   }
 
   function selectStock(code: string, name?: string) {
-    setSelectedCode(code);
+    const normalizedCode = code.trim().toUpperCase();
+    selectedCodeRef.current = normalizedCode;
+    const localQuote = quotesRef.current.find((quote) => quote.code === normalizedCode) || null;
+    setSelectedCode(normalizedCode);
+    setSelectedQuote(localQuote);
+    setHistory([]);
+    setNews([]);
+    setAnalysis(null);
+    setLastNewsCheck("");
+    setLoading((prev) => ({ ...prev, selected: true, history: true, news: true }));
     setQuery("");
     setSearchResults([]);
-    loadSelected(code);
-    loadHistory(code, range);
-    loadNews(code, name);
+    loadSelected(normalizedCode);
+    loadHistory(normalizedCode, range);
+    loadNews(normalizedCode, name || localQuote?.name);
   }
 
   function toggleWatch(code: string) {
@@ -994,6 +1089,18 @@ export default function HomePage() {
       return next;
     });
   }
+
+  useEffect(() => {
+    selectedCodeRef.current = selectedCode;
+  }, [selectedCode]);
+
+  useEffect(() => {
+    watchlistRef.current = watchlist;
+  }, [watchlist]);
+
+  useEffect(() => {
+    quotesRef.current = quotes;
+  }, [quotes]);
 
   useEffect(() => {
     return () => {
@@ -1018,7 +1125,7 @@ export default function HomePage() {
     loadQuotes();
     loadSelected(selectedCode);
     loadHistory(selectedCode, range);
-    loadNews(selectedCode, "台積電");
+    loadNews(selectedCode);
 
     const quoteTimer = window.setInterval(() => {
       loadQuotes({ silent: true });
@@ -1054,17 +1161,17 @@ export default function HomePage() {
 
   useEffect(() => {
     if (aiStatus === null) return;
-    loadWatchlistDigest(watchlist);
-    const timer = window.setInterval(() => loadWatchlistDigest(watchlist), WATCHLIST_DIGEST_REFRESH_MS);
+    loadWatchlistDigest(watchlistRef.current);
+    const timer = window.setInterval(() => loadWatchlistDigest(watchlistRef.current, { force: true }), WATCHLIST_DIGEST_REFRESH_MS);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchlist.join(","), aiStatus?.configured]);
+  }, [aiStatus?.configured]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => loadNews(selectedCode, selectedQuote?.name, { silent: true }), NEWS_REFRESH_MS);
+    const timer = window.setInterval(() => loadNews(selectedCodeRef.current, undefined, { silent: true }), NEWS_REFRESH_MS);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCode, selectedQuote?.name]);
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem("tw-stock-theme", theme);
@@ -1273,7 +1380,7 @@ export default function HomePage() {
               )}
             >
               {refreshingVisibleData && <Spinner />}
-              {refreshingVisibleData ? "更新中" : "立即更新"}
+              {refreshingVisibleData ? "更新中" : "重新整理"}
             </button>
             <button onClick={() => setTheme(isDark ? "light" : "dark")} className={cn("rounded-full border px-4 py-2 text-sm font-medium", softPanel)}>
               {isDark ? "淺色" : "深色"}
@@ -1485,12 +1592,12 @@ export default function HomePage() {
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
                 <h2 className="text-xl font-bold">自選股當日重點</h2>
-                <p className={cn("mt-1 text-sm", muted)}>整合當日新聞、量價與自選股結構。</p>
+                <p className={cn("mt-1 text-sm", muted)}>整合當日新聞、量價與自選股結構；新增或移除自選股不會立刻重算，需按上方「重新整理」或等 12 小時自動整理。</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Badge>{watchlist.length} 檔自選</Badge>
                 <Badge tone={aiConfigured ? "up" : "warn"}>AI：{aiModeLabel}</Badge>
-                <Badge tone="warn">{watchlistDigestLoading ? "AI整理中" : "自動12小時"}</Badge>
+                <Badge tone="warn">{watchlistDigestLoading ? "AI整理中" : "每12小時整理"}</Badge>
                 <Badge>今日 {watchlistDigest.sourceCount ?? 0} 則可信新聞</Badge>
                 <Badge>{watchlistDigest.chartCount ?? 0} 檔圖表</Badge>
               </div>
