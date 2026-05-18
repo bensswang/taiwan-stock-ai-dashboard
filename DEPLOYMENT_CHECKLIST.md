@@ -9,7 +9,7 @@
 - [ ] 確認 `/api/stocks/quote?code=2330` 可回傳資料
 - [ ] 確認 `/api/stocks/history?code=2330&range=1m` 可回傳資料
 - [ ] 確認 `/api/news?code=2330&company=台積電` 可回傳新聞
-- [ ] 如需 AI 模型，設定 `OPENAI_API_KEY`
+- [ ] 如需 AI 模型，設定 `GROQ_API_KEY`
 
 ## 法務與授權
 

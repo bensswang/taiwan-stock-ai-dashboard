@@ -165,14 +165,14 @@ body:
 5. Environment Variables 可先不填
 6. Deploy
 
-若要使用 OpenAI 做更完整新聞分析：
+若要使用 Groq 做更完整新聞分析：
 
 ```bash
-OPENAI_API_KEY=你的金鑰
-OPENAI_MODEL=gpt-4.1-mini
+GROQ_API_KEY=你的金鑰
+GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
-沒有設定 `OPENAI_API_KEY` 時，AI 摘要 API 會直接回傳錯誤；網站不會再使用本地規則式摘要假裝成 AI 摘要。
+沒有設定 `GROQ_API_KEY` 時，AI 摘要 API 會直接回傳錯誤；網站不會再使用本地規則式摘要假裝成 AI 摘要。
 
 ---
 
@@ -251,7 +251,7 @@ OPENAI_MODEL=gpt-4.1-mini
 ## V18 更新重點
 
 - 「自選股近期重點」改為每 12 小時重新整理一次 AI 摘要，資料來自全部自選股近五天新聞與自選股行情。
-- 新增 `/api/ai/watchlist`，會合併自選股新聞後產生摘要；必須設定 `OPENAI_API_KEY` 才會產生 AI 摘要；未設定時會在前端顯示「尚未設定 API Key」。
+- 新增 `/api/ai/watchlist`，會合併自選股新聞後產生摘要；必須設定 `GROQ_API_KEY` 才會產生 AI 摘要；未設定時會在前端顯示「尚未設定 API Key」。
 - 「台灣加權指數」與「台指期盤前盤後走勢」上下順序交換，台灣加權指數放在上方。
 - 「台灣加權指數」標題字樣加大。
 
@@ -264,6 +264,6 @@ OPENAI_MODEL=gpt-4.1-mini
 - 自選股當日重點仍維持每 12 小時更新一次，版面維持 V18 的摘要樣式。
 
 
-## V24 OpenAI API 設定
+## V25 Groq API 設定
 
-AI 摘要現在必須使用 OpenAI API Key。請在 Netlify 的 Environment variables 新增 `OPENAI_API_KEY`，scope 需包含 Functions，設定後重新部署。請不要把真實 key 寫進 GitHub 或前端程式。
+AI 摘要現在必須使用 Groq API Key。請在 Netlify 的 Environment variables 新增 `GROQ_API_KEY`，scope 需包含 Functions，設定後重新部署。請不要把真實 key 寫進 GitHub 或前端程式。

@@ -1,6 +1,6 @@
 {
-  "name": "taiwan-stock-news-board-v24",
-  "version": "24.0.0",
+  "name": "taiwan-stock-news-board-v25-groq",
+  "version": "25.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",

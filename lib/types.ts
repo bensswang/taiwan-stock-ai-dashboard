@@ -61,5 +61,5 @@ export interface AiAnalysis {
   risks: string[];
   sourceCount: number;
   updatedAt: string;
-  provider: "openai" | "local-rules";
+  provider: "groq" | "local-rules";
 }

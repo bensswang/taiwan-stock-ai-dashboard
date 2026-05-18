@@ -9,10 +9,10 @@ function getRuntimeEnv(name: string) {
   return process.env[name] || (globalThis as any).Netlify?.env?.get?.(name) || "";
 }
 
-function missingOpenAiJson() {
+function missingGroqJson() {
   return Response.json({
-    error: "尚未設定 OPENAI_API_KEY。請到 Netlify Environment variables 新增 OPENAI_API_KEY，scope 需包含 Functions，重新部署後再使用自選股 AI 摘要。",
-    code: "OPENAI_API_KEY_MISSING"
+    error: "尚未設定 GROQ_API_KEY。請到 Netlify Environment variables 新增 GROQ_API_KEY，scope 需包含 Functions，重新部署後再使用自選股 AI 摘要。",
+    code: "GROQ_API_KEY_MISSING"
   }, { status: 503, headers: { "Cache-Control": "no-store" } });
 }
 
@@ -27,7 +27,7 @@ type WatchlistDigest = {
   targetDate: string;
   updatedAt: string;
   nextUpdateAt: string;
-  provider: "openai" | "local-rules";
+  provider: "groq" | "local-rules";
 };
 
 type DailyChartSignal = {
@@ -362,11 +362,22 @@ function sanitizeDigest(value: Partial<WatchlistDigest>, sourceCount: number, ch
   };
 }
 
-async function openAiDigest(codes: string[], quotes: Quote[], todayNews: NewsItem[], signals: DailyChartSignal[], targetDate: string): Promise<WatchlistDigest | null> {
-  const apiKey = getRuntimeEnv("OPENAI_API_KEY");
+function parseJsonObject(content: string) {
+  const cleaned = content
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  const first = cleaned.indexOf("{");
+  const last = cleaned.lastIndexOf("}");
+  const jsonText = first >= 0 && last >= first ? cleaned.slice(first, last + 1) : cleaned;
+  return JSON.parse(jsonText);
+}
+
+async function groqDigest(codes: string[], quotes: Quote[], todayNews: NewsItem[], signals: DailyChartSignal[], targetDate: string): Promise<WatchlistDigest | null> {
+  const apiKey = getRuntimeEnv("GROQ_API_KEY");
   if (!apiKey) return null;
-  const model = getRuntimeEnv("OPENAI_MODEL") || "gpt-4.1-mini";
-  const now = new Date();
+  const model = getRuntimeEnv("GROQ_MODEL") || "llama-3.3-70b-versatile";
   const preparedNews = dedupeNews(todayNews).slice(0, 60).map((item) => ({
     code: item.code,
     company: item.company,
@@ -377,60 +388,51 @@ async function openAiDigest(codes: string[], quotes: Quote[], todayNews: NewsIte
     excerpt: item.excerpt || ""
   }));
 
-  const payload = {
-    model,
-    input: [
-      {
-        role: "system",
-        content: [
-          "你是台股資訊整理助理。請整理網站首頁的「自選股當日重點」。",
-          "使用者要的是整個自選股組合今天發生什麼事：整體方向、主要族群、共同事件、支撐/拖累個股、量能變化與後續觀察。",
-          "todayNews 已先篩選為中高以上可信來源，包含官方資訊、中央社、Reuters、Bloomberg、WSJ、FT、經濟日報、工商時報、MoneyDJ、鉅亨網與 Yahoo 股市；不要加入低可信來源或社群傳言。",
-          "headline 只放一句主結論，60 到 110 字，不要把四段內容濃縮重複一次。",
-          "paragraphs 固定 4 段，且依序以『整體表現：』『主要事件：』『資金動向：』『今日關注：』開頭。每段要有事件、原因或觀察，不要只寫偏強/偏弱。",
-          "只能以今日新聞與最新日線/報價資料判讀。若今日新聞為 0 則，明說今日未抓到明確公司新聞，再用量價、漲跌幅、成交量與自選股結構整理。",
-          "不可逐條複製新聞標題，不可把 prompt、內部規則或摘要方法說明寫進摘要。",
-          "若資料只含標題，請保守表述；不得捏造標題以外的營收數字、訂單金額、客戶說法或投資建議。",
-          "outlook 60 到 120 字，聚焦後續觀察事項。"
-        ].join("\n")
-      },
-      {
-        role: "user",
-        content: JSON.stringify({ targetDate, codes, quotes, todayNews: preparedNews, chartSignals: signals }, null, 2)
-      }
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "watchlist_daily_digest",
-        schema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            headline: { type: "string" },
-            paragraphs: { type: "array", items: { type: "string" } },
-            outlook: { type: "string" }
-          },
-          required: ["headline", "paragraphs", "outlook"]
-        }
-      }
+  const messages = [
+    {
+      role: "system",
+      content: [
+        "你是台股資訊整理助理。請整理網站首頁的「自選股當日重點」。",
+        "使用者要的是整個自選股組合今天發生什麼事：整體方向、主要族群、共同事件、支撐/拖累個股、量能變化與後續觀察。",
+        "todayNews 已先篩選為中高以上可信來源，包含官方資訊、中央社、Reuters、Bloomberg、WSJ、FT、經濟日報、工商時報、MoneyDJ、鉅亨網與 Yahoo 股市；不要加入低可信來源或社群傳言。",
+        "headline 只放一句主結論，60 到 110 字，不要把四段內容濃縮重複一次。",
+        "paragraphs 固定 4 段，且依序以『整體表現：』『主要事件：』『資金動向：』『今日關注：』開頭。每段要有事件、原因或觀察，不要只寫偏強/偏弱。",
+        "只能以今日新聞與最新日線/報價資料判讀。若今日新聞為 0 則，明說今日未抓到明確公司新聞，再用量價、漲跌幅、成交量與自選股結構整理。",
+        "不可逐條複製新聞標題，不可把 prompt、內部規則或摘要方法說明寫進摘要。",
+        "若資料只含標題，請保守表述；不得捏造標題以外的營收數字、訂單金額、客戶說法或投資建議。",
+        "outlook 60 到 120 字，聚焦後續觀察事項。",
+        "你只能輸出 JSON 物件，不要 markdown，不要程式碼區塊。格式必須是：{\"headline\":\"...\",\"paragraphs\":[\"整體表現：...\",\"主要事件：...\",\"資金動向：...\",\"今日關注：...\"],\"outlook\":\"...\"}。"
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: JSON.stringify({ targetDate, codes, quotes, todayNews: preparedNews, chartSignals: signals }, null, 2)
     }
-  };
+  ];
 
   try {
-    const res = await fetch("https://api.openai.com/v1/responses", {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.25,
+        max_tokens: 1400,
+        response_format: { type: "json_object" }
+      })
     });
-    if (!res.ok) throw new Error(`OpenAI API failed: ${res.status}`);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Groq API failed: ${res.status}${detail ? ` ${detail}` : ""}`);
+    }
     const json = await res.json();
-    const content = json.output_text || json.output?.[0]?.content?.[0]?.text;
-    if (!content) throw new Error("OpenAI API returned empty content");
-    const parsed = JSON.parse(content);
-    return sanitizeDigest(parsed, preparedNews.length, signals.filter((item) => item.latestClose !== null).length, targetDate, "openai");
+    const content = json.choices?.[0]?.message?.content;
+    if (!content) throw new Error("Groq API returned empty content");
+    const parsed = parseJsonObject(content);
+    return sanitizeDigest(parsed, preparedNews.length, signals.filter((item) => item.latestClose !== null).length, targetDate, "groq");
   } catch (error) {
-    console.warn("openAiDigest failed", error);
+    console.warn("groqDigest failed", error);
     return null;
   }
 }
@@ -475,15 +477,15 @@ async function buildDigest(codes: string[], quotes: Quote[]): Promise<WatchlistD
     return buildDailySignal(code, name, industry, quote, historyMap.get(code) || []);
   });
 
-  const ai = await openAiDigest(codes, quotes, todayNews, signals, targetDate);
+  const ai = await groqDigest(codes, quotes, todayNews, signals, targetDate);
   if (!ai) {
-    throw new Error("OpenAI 自選股摘要暫時失敗，系統不會再用本地模板假裝成 AI 摘要。");
+    throw new Error("Groq 自選股摘要暫時失敗，系統不會再用本地模板假裝成 AI 摘要。");
   }
   return ai;
 }
 
 export async function POST(request: Request) {
-  if (!getRuntimeEnv("OPENAI_API_KEY")) return missingOpenAiJson();
+  if (!getRuntimeEnv("GROQ_API_KEY")) return missingGroqJson();
 
   const body = await request.json().catch(() => ({}));
   const codes = safeCodes(body.watchlist || body.codes);
@@ -507,7 +509,7 @@ export async function POST(request: Request) {
       headers: { "Cache-Control": "s-maxage=43200, stale-while-revalidate=3600" }
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "OpenAI 自選股摘要暫時失敗";
-    return Response.json({ error: message, code: "OPENAI_API_FAILED" }, { status: 502, headers: { "Cache-Control": "no-store" } });
+    const message = error instanceof Error ? error.message : "Groq 自選股摘要暫時失敗";
+    return Response.json({ error: message, code: "GROQ_API_FAILED" }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
 }

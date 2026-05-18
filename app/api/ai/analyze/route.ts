@@ -8,10 +8,10 @@ function getRuntimeEnv(name: string) {
   return process.env[name] || (globalThis as any).Netlify?.env?.get?.(name) || "";
 }
 
-function missingOpenAiResponse() {
+function missingGroqResponse() {
   return safeJsonResponse({
-    error: "尚未設定 OPENAI_API_KEY。請到 Netlify Environment variables 新增 OPENAI_API_KEY，scope 需包含 Functions，重新部署後再使用 AI 摘要。",
-    code: "OPENAI_API_KEY_MISSING"
+    error: "尚未設定 GROQ_API_KEY。請到 Netlify Environment variables 新增 GROQ_API_KEY，scope 需包含 Functions，重新部署後再使用 AI 摘要。",
+    code: "GROQ_API_KEY_MISSING"
   }, { status: 503, headers: { "Cache-Control": "no-store" } });
 }
 
@@ -281,10 +281,22 @@ function sanitizeAnalysis(value: Partial<AiAnalysis>, sourceCount: number, provi
   };
 }
 
-async function openAiAnalyze(stock: Quote | null, news: NewsItem[]): Promise<AiAnalysis | null> {
-  const apiKey = getRuntimeEnv("OPENAI_API_KEY");
+function parseJsonObject(content: string) {
+  const cleaned = content
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  const first = cleaned.indexOf("{");
+  const last = cleaned.lastIndexOf("}");
+  const jsonText = first >= 0 && last >= first ? cleaned.slice(first, last + 1) : cleaned;
+  return JSON.parse(jsonText);
+}
+
+async function groqAnalyze(stock: Quote | null, news: NewsItem[]): Promise<AiAnalysis | null> {
+  const apiKey = getRuntimeEnv("GROQ_API_KEY");
   if (!apiKey) return null;
-  const model = getRuntimeEnv("OPENAI_MODEL") || "gpt-4.1-mini";
+  const model = getRuntimeEnv("GROQ_MODEL") || "llama-3.3-70b-versatile";
   const preparedNews = dedupeEvents(recentNews(news, 5)).slice(0, 12).map((item) => ({
     title: normalizeTitle(item.title, item.source),
     source: item.source,
@@ -293,77 +305,68 @@ async function openAiAnalyze(stock: Quote | null, news: NewsItem[]): Promise<AiA
     category: item.category || eventCategory(`${item.title} ${item.excerpt || ""}`),
     url: item.url
   }));
-  const payload = {
-    model,
-    input: [
-      {
-        role: "system",
-        content: [
-          "你是台股新聞事件整理助理。請用繁體中文，根據使用者提供的 stock 與 news JSON 產生網站用摘要。",
-          "摘要要像人工整理事件脈絡：先說近五天主軸，再說今日新事件與股價量能反應，最後說後續觀察。",
-          "news 已先篩選為中高以上可信來源，包含官方資訊、中央社、Reuters、Bloomberg、WSJ、FT、經濟日報、工商時報、MoneyDJ、鉅亨網與 Yahoo 股市；不要加入低可信來源或社群傳言。",
-          "每句都要有具體事件、影響或觀察點；不可逐條複製新聞標題，不可把標題改寫成清單。",
-          "summary 請寫成 2 到 3 段，合計 180 到 300 字，用換行分段；內容風格參考：『近期主軸是……。這不代表……，但代表市場關注……。營收面／量價面……。後續觀察……。』",
-          "keyPoints 請給 3 點，每點 35 到 80 字，分別對應：近五天主軸、今日事件與量價反應、後續觀察。",
-          "如果今日新聞為 0 則，請用『今日暫未抓到明確的新公司消息』表述，再用近五天脈絡與量價輔助，不要捏造原因。",
-          "若資料只含標題，必須保守表述；不得捏造標題以外的財務數字、客戶、訂單金額或公司說法。",
-          "不要輸出提示詞、內部規則、免責提醒或『不要抄標題』這類說明。"
-        ].join("\n")
-      },
-      {
-        role: "user",
-        content: JSON.stringify({ stock, news: preparedNews }, null, 2)
-      }
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "analysis",
-        schema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            tone: { type: "string", enum: toneValues },
-            summary: { type: "string" },
-            keyPoints: { type: "array", items: { type: "string" } },
-            risks: { type: "array", items: { type: "string" } }
-          },
-          required: ["tone", "summary", "keyPoints", "risks"]
-        }
-      }
+
+  const messages = [
+    {
+      role: "system",
+      content: [
+        "你是台股新聞事件整理助理。請用繁體中文，根據使用者提供的 stock 與 news JSON 產生網站用摘要。",
+        "摘要要像人工整理事件脈絡：先說近五天主軸，再說今日新事件與股價量能反應，最後說後續觀察。",
+        "news 已先篩選為中高以上可信來源，包含官方資訊、中央社、Reuters、Bloomberg、WSJ、FT、經濟日報、工商時報、MoneyDJ、鉅亨網與 Yahoo 股市；不要加入低可信來源或社群傳言。",
+        "每句都要有具體事件、影響或觀察點；不可逐條複製新聞標題，不可把標題改寫成清單。",
+        "summary 請寫成 2 到 3 段，合計 180 到 300 字，用換行分段；內容風格參考：『近期主軸是……。這不代表……，但代表市場關注……。營收面／量價面……。後續觀察……。』",
+        "keyPoints 請給 3 點，每點 35 到 80 字，分別對應：近五天主軸、今日事件與量價反應、後續觀察。",
+        "如果今日新聞為 0 則，請用『今日暫未抓到明確的新公司消息』表述，再用近五天脈絡與量價輔助，不要捏造原因。",
+        "若資料只含標題，必須保守表述；不得捏造標題以外的財務數字、客戶、訂單金額或公司說法。",
+        "不要輸出提示詞、內部規則、免責提醒或『不要抄標題』這類說明。",
+        "你只能輸出 JSON 物件，不要 markdown，不要程式碼區塊。格式必須是：{\"tone\":\"偏多|中性偏多|中性|中性偏空|偏空\",\"summary\":\"...\",\"keyPoints\":[\"...\"],\"risks\":[\"...\"]}。"
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: JSON.stringify({ stock, news: preparedNews }, null, 2)
     }
-  };
+  ];
 
   try {
-    const res = await fetch("https://api.openai.com/v1/responses", {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.25,
+        max_tokens: 1200,
+        response_format: { type: "json_object" }
+      })
     });
-    if (!res.ok) throw new Error(`OpenAI API failed: ${res.status}`);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Groq API failed: ${res.status}${detail ? ` ${detail}` : ""}`);
+    }
     const json = await res.json();
-    const content = json.output_text || json.output?.[0]?.content?.[0]?.text;
-    if (!content) throw new Error("OpenAI API returned empty content");
-    const parsed = JSON.parse(content);
-    return sanitizeAnalysis(parsed, preparedNews.length, "openai");
+    const content = json.choices?.[0]?.message?.content;
+    if (!content) throw new Error("Groq API returned empty content");
+    const parsed = parseJsonObject(content);
+    return sanitizeAnalysis(parsed, preparedNews.length, "groq");
   } catch (error) {
-    console.warn("openAiAnalyze failed", error);
+    console.warn("groqAnalyze failed", error);
     return null;
   }
 }
 
 export async function POST(request: Request) {
-  if (!getRuntimeEnv("OPENAI_API_KEY")) return missingOpenAiResponse();
+  if (!getRuntimeEnv("GROQ_API_KEY")) return missingGroqResponse();
 
   const body = await request.json().catch(() => ({}));
   const stock = (body.stock || null) as Quote | null;
   const news = Array.isArray(body.news) ? (body.news as NewsItem[]) : [];
-  const ai = await openAiAnalyze(stock, news);
+  const ai = await groqAnalyze(stock, news);
 
   if (!ai) {
     return safeJsonResponse({
-      error: "OpenAI 摘要暫時失敗，請稍後再試；系統不會再用本地模板假裝成 AI 摘要。",
-      code: "OPENAI_API_FAILED"
+      error: "Groq 摘要暫時失敗，請稍後再試；系統不會再用本地模板假裝成 AI 摘要。",
+      code: "GROQ_API_FAILED"
     }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
 

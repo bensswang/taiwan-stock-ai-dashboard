@@ -6,12 +6,12 @@ function getRuntimeEnv(name: string) {
 }
 
 export async function GET() {
-  const configured = Boolean(getRuntimeEnv("OPENAI_API_KEY"));
-  const model = getRuntimeEnv("OPENAI_MODEL") || "gpt-4.1-mini";
+  const configured = Boolean(getRuntimeEnv("GROQ_API_KEY"));
+  const model = getRuntimeEnv("GROQ_MODEL") || "llama-3.3-70b-versatile";
 
   return Response.json({
     configured,
-    mode: configured ? "openai" : "missing-key",
+    mode: configured ? "groq" : "missing-key",
     model: configured ? model : null,
     checkedAt: new Date().toISOString()
   }, { headers: { "Cache-Control": "no-store" } });

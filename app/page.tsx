@@ -22,12 +22,12 @@ type WatchlistDigest = {
   targetDate?: string;
   updatedAt?: string;
   nextUpdateAt?: string;
-  provider?: "openai" | "local-rules";
+  provider?: "groq" | "local-rules";
 };
 
 type AiStatus = {
   configured: boolean;
-  mode: "openai" | "missing-key";
+  mode: "groq" | "missing-key";
   model: string | null;
   checkedAt?: string;
 };
@@ -84,9 +84,9 @@ const WATCHLIST_DIGEST_REFRESH_MS = 12 * 60 * 60 * 1000;
 
 const fallbackWatchlistDigest: WatchlistDigest = {
   headline:
-    "自選股 AI 摘要尚未產生；請先確認 OpenAI API Key 已設定，或按「立即更新」重新整理。",
+    "自選股 AI 摘要尚未產生；請先確認 Groq API Key 已設定，或按「立即更新」重新整理。",
   paragraphs: [
-    "AI 摘要現在只會使用 OpenAI 產生；若未設定 OPENAI_API_KEY，不會再用本地模板假裝成 AI 摘要。"
+    "AI 摘要現在只會使用 Groq 產生；若未設定 GROQ_API_KEY，不會再用本地模板假裝成 AI 摘要。"
   ],
   outlook:
     "設定 API Key 後重新部署，再回到網站按立即更新即可。",
@@ -726,7 +726,7 @@ export default function HomePage() {
   const muted = isDark ? "text-slate-400" : "text-slate-500";
   const input = isDark ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-950";
   const aiConfigured = aiStatus?.configured === true;
-  const aiModeLabel = aiStatus ? (aiStatus.configured ? `OpenAI${aiStatus.model ? ` / ${aiStatus.model}` : ""}` : "未設定 API Key") : "檢查中";
+  const aiModeLabel = aiStatus ? (aiStatus.configured ? `Groq${aiStatus.model ? ` / ${aiStatus.model}` : ""}` : "未設定 API Key") : "檢查中";
 
   function stamp() {
     return new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -897,7 +897,7 @@ export default function HomePage() {
 
   async function analyzeNews() {
     if (!aiConfigured) {
-      setError("尚未設定 OPENAI_API_KEY；請先到 Netlify 設定環境變數並重新部署。AI 摘要不會使用本地模板替代。");
+      setError("尚未設定 GROQ_API_KEY；請先到 Netlify 設定環境變數並重新部署。AI 摘要不會使用本地模板替代。");
       return;
     }
     setLoading((prev) => ({ ...prev, analysis: true }));
@@ -926,9 +926,9 @@ export default function HomePage() {
     if (aiStatus === null) return;
     if (!aiConfigured) {
       setWatchlistDigest({
-        headline: "尚未設定 OpenAI API Key；自選股 AI 摘要暫停，行情、圖表與可信新聞仍可正常更新。",
+        headline: "尚未設定 Groq API Key；自選股 AI 摘要暫停，行情、圖表與可信新聞仍可正常更新。",
         paragraphs: [
-          "請到 Netlify 的 Environment variables 新增 OPENAI_API_KEY，scope 需包含 Functions，重新部署後這裡才會顯示真正的 OpenAI 摘要。"
+          "請到 Netlify 的 Environment variables 新增 GROQ_API_KEY，scope 需包含 Functions，重新部署後這裡才會顯示真正的 Groq 摘要。"
         ],
         outlook: "設定完成後按立即更新，或等待下一次自動更新。",
         sourceCount: 0,
@@ -1537,7 +1537,7 @@ export default function HomePage() {
                 <div className={cn("border-b p-5", isDark ? "border-white/10 bg-cyan-400/10" : "border-cyan-100 bg-cyan-50")}>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={analysis.tone.includes("多") ? "up" : analysis.tone.includes("空") ? "down" : "warn"}>{analysis.tone}</Badge>
-                    <Badge tone="up">OpenAI 摘要</Badge>
+                    <Badge tone="up">Groq 摘要</Badge>
                     <Badge>{analysis.sourceCount} 則可信新聞</Badge>
                   </div>
                   <h3 className="mt-3 text-2xl font-black">新聞摘要</h3>
