@@ -909,7 +909,9 @@ export default function HomePage() {
       const res = await fetch(`/api/news?${params.toString()}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得新聞");
-      const nextNews = Array.isArray(json.data) ? json.data : [];
+      const nextNews = (Array.isArray(json.data) ? json.data : [])
+        .filter((item: NewsItem) => item.code === normalizedCode)
+        .map((item: NewsItem) => ({ ...item, code: normalizedCode, company: json.company || item.company }));
       if (requestSeq === newsSeqRef.current && selectedCodeRef.current === normalizedCode) {
         setNews(nextNews);
         setLastNewsCheck(stamp());
@@ -977,7 +979,7 @@ export default function HomePage() {
       const res = await fetch("/api/ai/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stock: selectedQuote, news })
+        body: JSON.stringify({ stock: selectedQuote, news: selectedNews })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "AI 分析失敗");
@@ -1305,6 +1307,7 @@ export default function HomePage() {
   }, [quotes]);
 
   const selectedCompanyName = selectedQuote?.name || selectedCode;
+  const selectedNews = useMemo(() => news.filter((item) => item.code === selectedCode), [news, selectedCode]);
 
   const popularRows = useMemo(() => {
     return quotes
@@ -1633,7 +1636,7 @@ export default function HomePage() {
                 <h2 className="text-xl font-bold">{selectedCompanyName} 近五天可信新聞與當日重點</h2>
                 <p className={cn("mt-1 text-sm", muted)}>只納入中高以上可信來源，整合近五天新聞、今日事件與量價反應。AI 模式：{aiModeLabel}｜更新：{lastNewsCheck || "--"}</p>
               </div>
-              <button onClick={analyzeNews} disabled={loading.analysis || !news.length || !aiConfigured} className="inline-flex items-center justify-center gap-2 rounded-full bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
+              <button onClick={analyzeNews} disabled={loading.analysis || !selectedNews.length || !aiConfigured} className="inline-flex items-center justify-center gap-2 rounded-full bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
                 {loading.analysis && <Spinner />}
                 {loading.analysis ? "整理事件中" : aiConfigured ? "整理可信新聞與當日重點" : "尚未設定 API Key"}
               </button>
@@ -1667,7 +1670,7 @@ export default function HomePage() {
             )}
 
             <div className="mt-5 grid gap-4 md:grid-cols-2">
-              {loading.news && !news.length ? <EmptyState title="新聞載入中" /> : news.length ? news.map((item) => (
+              {loading.news && !selectedNews.length ? <EmptyState title="新聞載入中" /> : selectedNews.length ? selectedNews.map((item) => (
                 <article key={item.id} className={cn("rounded-3xl border p-5", softPanel)}>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge>{item.code} {item.company}</Badge>

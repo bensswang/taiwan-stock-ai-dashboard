@@ -193,7 +193,7 @@ export async function getNewsByStock(code: string, company: string, days = 5): P
     const query = `${company} ${code} 股票 (${trustedSourceQuery}) when:${days}d`;
     const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant`;
     const res = await fetch(url, {
-      next: { revalidate: 3600 },
+      cache: "no-store",
       headers: { Accept: "application/rss+xml,text/xml" }
     });
     if (!res.ok) throw new Error(`Google News RSS failed: ${res.status}`);
