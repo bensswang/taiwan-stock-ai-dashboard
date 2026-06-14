@@ -19,6 +19,46 @@
 
 > 注意：TWSE MIS 屬於基本市況報導資料，盤中較接近即時，但仍可能有來源延遲。若要商業公開營運或大量使用行情資料，需確認資料授權。
 
+
+---
+
+## V28：Python FastAPI 核心後端
+
+為了符合課程「請以 Python 為主」的要求，本專案新增 `backend/` Python FastAPI 後端。
+
+現在的架構是：
+
+```txt
+前端：Next.js / React，負責畫面與互動
+後端：Python FastAPI，負責股票資料、新聞整理、可信來源篩選與 Groq AI 摘要
+```
+
+也就是說，本專案的核心資料處理與 AI 分析邏輯可以改由 Python 執行，前端只作為視覺化展示層。
+
+### Python 後端啟動
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+### 前端連到 Python 後端
+
+在 Netlify 或 `.env.local` 設定：
+
+```txt
+PYTHON_API_URL=http://localhost:8000
+```
+
+部署後可改成：
+
+```txt
+PYTHON_API_URL=https://你的-python-backend網址
+```
+
+詳見：`PYTHON_BACKEND_部署說明.md`。
+
 ---
 
 ## 1. 安裝與啟動

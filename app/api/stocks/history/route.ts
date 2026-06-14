@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+import { proxyGetToPython } from "@/lib/pythonProxy";
 import { safeJsonResponse } from "@/lib/format";
 import { getTwseHistory } from "@/lib/twse";
 
@@ -8,6 +9,8 @@ import { getTwseHistory } from "@/lib/twse";
 const noStore = { headers: { "Cache-Control": "no-store" } };
 
 export async function GET(request: Request) {
+  const pythonResponse = await proxyGetToPython(request, "/api/stocks/history");
+  if (pythonResponse) return pythonResponse;
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code")?.trim();
   const range = searchParams.get("range") || "1m";

@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+import { proxyGetToPython } from "@/lib/pythonProxy";
 import { safeJsonResponse } from "@/lib/format";
 import { getTwseDailyQuotes, getTwseQuote } from "@/lib/twse";
 import { getBatchQuotesWithFallback, getQuotesWithRealtimeOverlay, getRealtimeQuote } from "@/lib/realtime";
@@ -8,6 +9,8 @@ import { getBatchQuotesWithFallback, getQuotesWithRealtimeOverlay, getRealtimeQu
 const noStore = { headers: { "Cache-Control": "no-store" } };
 
 export async function GET(request: Request) {
+  const pythonResponse = await proxyGetToPython(request, "/api/stocks/quote");
+  if (pythonResponse) return pythonResponse;
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code")?.trim();
   const codes = searchParams.get("codes")?.trim();

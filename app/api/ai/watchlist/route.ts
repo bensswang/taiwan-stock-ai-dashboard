@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+import { proxyPostToPython } from "@/lib/pythonProxy";
 import { getNewsByStock } from "@/lib/news";
 import { getAllStockMaster, getTwseHistory } from "@/lib/twse";
 import type { NewsItem, PricePoint, Quote } from "@/lib/types";
@@ -485,6 +486,8 @@ async function buildDigest(codes: string[], quotes: Quote[]): Promise<WatchlistD
 }
 
 export async function POST(request: Request) {
+  const pythonResponse = await proxyPostToPython(request, "/api/ai/watchlist");
+  if (pythonResponse) return pythonResponse;
   if (!getRuntimeEnv("GROQ_API_KEY")) return missingGroqJson();
 
   const body = await request.json().catch(() => ({}));

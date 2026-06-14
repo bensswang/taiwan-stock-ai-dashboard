@@ -1,6 +1,7 @@
 export const runtime = "nodejs";
 export const revalidate = 43200;
 
+import { proxyGetToPython } from "@/lib/pythonProxy";
 import { safeJsonResponse } from "@/lib/format";
 import { searchAllStockMaster } from "@/lib/twse";
 
@@ -11,6 +12,8 @@ function cacheHeaders() {
 }
 
 export async function GET(request: Request) {
+  const pythonResponse = await proxyGetToPython(request, "/api/stocks/search");
+  if (pythonResponse) return pythonResponse;
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get("q") || "").trim();
   const limit = Number(searchParams.get("limit") || 50);

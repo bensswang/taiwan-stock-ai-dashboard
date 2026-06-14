@@ -1,11 +1,14 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+import { proxyGetToPython } from "@/lib/pythonProxy";
 import { safeJsonResponse } from "@/lib/format";
 import { getNewsByStock } from "@/lib/news";
 import { getAllStockMaster } from "@/lib/twse";
 
 export async function GET(request: Request) {
+  const pythonResponse = await proxyGetToPython(request, "/api/news");
+  if (pythonResponse) return pythonResponse;
   const { searchParams } = new URL(request.url);
   const codeParam = searchParams.get("code")?.trim().toUpperCase();
   const companyParam = searchParams.get("company")?.trim();

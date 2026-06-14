@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+import { proxyPostToPython } from "@/lib/pythonProxy";
 import { safeJsonResponse } from "@/lib/format";
 import type { AiAnalysis, NewsItem, Quote } from "@/lib/types";
 
@@ -356,6 +357,8 @@ async function groqAnalyze(stock: Quote | null, news: NewsItem[]): Promise<AiAna
 }
 
 export async function POST(request: Request) {
+  const pythonResponse = await proxyPostToPython(request, "/api/ai/analyze");
+  if (pythonResponse) return pythonResponse;
   if (!getRuntimeEnv("GROQ_API_KEY")) return missingGroqResponse();
 
   const body = await request.json().catch(() => ({}));
