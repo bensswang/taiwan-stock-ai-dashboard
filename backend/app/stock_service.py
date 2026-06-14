@@ -237,41 +237,153 @@ async def get_quote(code: str) -> Quote | None:
     return make_fallback_quote(stock) if stock else None
 
 
-def fallback_history(code: str, base_price: float = 100) -> list[PricePoint]:
-    today = datetime.now(timezone.utc).date()
-    points = []
-    for i in range(95, -1, -1):
-        day = today - timedelta(days=i)
-        wave = math.sin(i * 0.24 + len(code)) * base_price * 0.05
-        drift = (95 - i) * base_price * 0.0006
-        close = max(base_price + wave + drift, 1)
-        points.append(PricePoint(date=day.isoformat(), open=close * 0.995, high=close * 1.012, low=close * 0.988, close=close, volume=round(1000 + abs(math.sin(i)) * 8000)))
-    return points
+def ymd(date_value: datetime) -> str:
+    return date_value.strftime("%Y%m%d")
+
+
+def roc_date_to_iso(value: str) -> str:
+    parts = str(value or "").split("/")
+    if len(parts) != 3:
+        return str(value or "")
+    try:
+        year = int(parts[0]) + 1911
+        month = int(parts[1])
+        day = int(parts[2])
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    except Exception:
+        return str(value or "")
+
+
+def month_start_dates_back(months: int) -> list[datetime]:
+    today = datetime.now(timezone.utc)
+    year = today.year
+    month = today.month
+    dates: list[datetime] = []
+    for offset in range(months - 1, -1, -1):
+        m = month - offset
+        y = year
+        while m <= 0:
+            m += 12
+            y -= 1
+        dates.append(datetime(y, m, 1, tzinfo=timezone.utc))
+    return dates
+
+
+def range_days(range_key: str) -> int:
+    return {"1w": 7, "1m": 31, "3m": 93, "1y": 366}.get(range_key, 31)
+
+
+def range_months(range_key: str) -> int:
+    return {"1w": 2, "1m": 3, "3m": 5, "1y": 14}.get(range_key, 3)
 
 
 def yahoo_range(range_key: str) -> str:
     return {"1w": "1mo", "1m": "2mo", "1y": "1y"}.get(range_key, "6mo")
 
 
+async def get_twse_history_points(code: str, range_key: str) -> list[PricePoint]:
+    normalized = normalize_code(code)
+    months = range_months(range_key)
+    batches: list[list[Any]] = []
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers={"User-Agent": "taiwan-stock-ai-python-backend/1.0"}) as client:
+        for date_value in month_start_dates_back(months):
+            url = f"{TWSE_HISTORY}?response=json&date={ymd(date_value)}&stockNo={quote(normalized)}"
+            try:
+                res = await client.get(url)
+                res.raise_for_status()
+                data = res.json()
+                rows = data.get("data") or []
+                if isinstance(rows, list):
+                    batches.append(rows)
+            except Exception:
+                continue
+
+    by_date: dict[str, PricePoint] = {}
+    for rows in batches:
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 7:
+                continue
+            point = PricePoint(
+                date=roc_date_to_iso(str(row[0] or "")),
+                volume=parse_number(row[1]),
+                open=parse_number(row[3]),
+                high=parse_number(row[4]),
+                low=parse_number(row[5]),
+                close=parse_number(row[6]),
+            )
+            if point.date and point.close is not None and point.close > 0:
+                by_date[point.date] = point
+    return sorted(by_date.values(), key=lambda item: item.date)
+
+
+async def get_yahoo_history_points(code: str, range_key: str) -> list[PricePoint]:
+    normalized = normalize_code(code)
+    symbol = f"{quote(normalized)}.TW"
+    url = f"https://query1.finance.yahoo.com/v9/finance/chart/{symbol}?range={yahoo_range(range_key)}&interval=1d"
+    data = await fetch_json(url, 60 * 60)
+    result = (data.get("chart", {}).get("result") or [None])[0]
+    if not result:
+        return []
+    timestamps = result.get("timestamp") or []
+    quote_data = (result.get("indicators", {}).get("quote") or [{}])[0]
+    closes = quote_data.get("close") or []
+    opens = quote_data.get("open") or []
+    highs = quote_data.get("high") or []
+    lows = quote_data.get("low") or []
+    volumes = quote_data.get("volume") or []
+    points: list[PricePoint] = []
+    for idx, ts in enumerate(timestamps):
+        close = closes[idx] if idx < len(closes) else None
+        if close is None:
+            continue
+        points.append(PricePoint(
+            date=datetime.fromtimestamp(ts, timezone.utc).date().isoformat(),
+            open=opens[idx] if idx < len(opens) else None,
+            high=highs[idx] if idx < len(highs) else None,
+            low=lows[idx] if idx < len(lows) else None,
+            close=close,
+            volume=volumes[idx] if idx < len(volumes) else None,
+        ))
+    return sorted(points, key=lambda item: item.date)
+
+
+def sanitize_history(points: list[PricePoint]) -> list[PricePoint]:
+    cleaned = [p for p in points if p.date and p.close is not None and p.close > 0]
+    if len(cleaned) < 4:
+        return cleaned
+    last = cleaned[-1]
+    recent = [p.close for p in cleaned[-7:-1] if p.close is not None]
+    if len(recent) < 3 or last.close is None:
+        return cleaned
+    avg = sum(recent) / len(recent)
+    previous = cleaned[-2].close
+    # 避免資料來源尾端出現明顯錯值，造成圖表突然暴跌或暴漲。
+    if avg > 0 and previous is not None:
+        if last.close < avg * 0.45 and previous > avg * 0.7:
+            return cleaned[:-1]
+        if last.close > avg * 1.8 and previous < avg * 1.3:
+            return cleaned[:-1]
+    return cleaned
+
+
 async def get_history(code: str, range_key: str = "1m") -> list[PricePoint]:
     normalized = normalize_code(code)
+    by_date: dict[str, PricePoint] = {}
+
+    # 優先用 TWSE 官方月資料；Yahoo 僅做補強。不要再用波浪狀假資料，以免使用者誤判走勢。
+    for point in await get_twse_history_points(normalized, range_key):
+        by_date[point.date] = point
+
     try:
-        symbol = f"{quote(normalized)}.TW"
-        url = f"https://query1.finance.yahoo.com/v9/finance/chart/{symbol}?range={yahoo_range(range_key)}&interval=1d"
-        data = await fetch_json(url, 60 * 60)
-        result = (data.get("chart", {}).get("result") or [None])[0]
-        timestamps = result.get("timestamp") or []
-        quote_data = (result.get("indicators", {}).get("quote") or [{}])[0]
-        points: list[PricePoint] = []
-        for idx, ts in enumerate(timestamps):
-            close = (quote_data.get("close") or [None])[idx]
-            if close is None:
-                continue
-            points.append(PricePoint(date=datetime.fromtimestamp(ts, timezone.utc).date().isoformat(), open=(quote_data.get("open") or [None])[idx], high=(quote_data.get("high") or [None])[idx], low=(quote_data.get("low") or [None])[idx], close=close, volume=(quote_data.get("volume") or [None])[idx]))
-        days = {"1w": 7, "1m": 31, "3m": 93, "1y": 366}.get(range_key, 31)
-        cutoff = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
-        filtered = [point for point in points if point.date >= cutoff]
-        return filtered or points[-days:]
+        for point in await get_yahoo_history_points(normalized, range_key):
+            by_date[point.date] = point
     except Exception:
-        quote_item = await get_quote(normalized)
-        return fallback_history(normalized, quote_item.price if quote_item and quote_item.price else 100)
+        pass
+
+    points = sanitize_history(sorted(by_date.values(), key=lambda item: item.date))
+    days = range_days(range_key)
+    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+    filtered = [point for point in points if point.date >= cutoff]
+    if filtered:
+        return filtered
+    return points[-days:]
