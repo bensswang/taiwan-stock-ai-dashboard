@@ -83,6 +83,16 @@ const NEWS_REFRESH_MS = 60 * 60 * 1000;
 const WATCHLIST_DIGEST_REFRESH_MS = 12 * 60 * 60 * 1000;
 const WATCHLIST_DIGEST_STORAGE_KEY = "tw-stock-watchlist-digest-cache-v1";
 
+const PYTHON_API_PUBLIC_URL = (process.env.NEXT_PUBLIC_PYTHON_API_URL || "").replace(/\/$/, "");
+
+function apiUrl(path: string) {
+  if (!PYTHON_API_PUBLIC_URL) return path;
+  if (path.startsWith("/api/stocks") || path.startsWith("/api/news") || path.startsWith("/api/ai")) {
+    return `${PYTHON_API_PUBLIC_URL}${path}`;
+  }
+  return path;
+}
+
 const fallbackWatchlistDigest: WatchlistDigest = {
   headline:
     "自選股 AI 摘要尚未產生；請先確認 Groq API Key 已設定，或按「重新整理」重新整理。",
@@ -778,7 +788,7 @@ export default function HomePage() {
 
   async function loadAiStatus() {
     try {
-      const res = await fetch("/api/ai/status", { cache: "no-store" });
+      const res = await fetch(apiUrl("/api/ai/status"), { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "AI 狀態檢查失敗");
       setAiStatus(json);
@@ -793,7 +803,7 @@ export default function HomePage() {
       setLoading((prev) => ({ ...prev, quotes: true }));
     }
     try {
-      const res = await fetch("/api/stocks/quote", { cache: "no-store" });
+      const res = await fetch(apiUrl("/api/stocks/quote"), { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得股票行情");
       const nextQuotes = Array.isArray(json.data) ? json.data : [];
@@ -818,7 +828,7 @@ export default function HomePage() {
     }
     if (resetAnalysis) setAnalysis(null);
     try {
-      const res = await fetch(`/api/stocks/quote?code=${encodeURIComponent(normalizedCode)}`, { cache: "no-store" });
+      const res = await fetch(apiUrl(`/api/stocks/quote?code=${encodeURIComponent(normalizedCode)}`), { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得個股資料");
       if (json.data && requestSeq === selectedQuoteSeqRef.current && selectedCodeRef.current === normalizedCode) {
@@ -843,7 +853,7 @@ export default function HomePage() {
       setLoading((prev) => ({ ...prev, history: true }));
     }
     try {
-      const res = await fetch(`/api/stocks/history?code=${encodeURIComponent(normalizedCode)}&range=${selectedRange}`, { cache: "no-store" });
+      const res = await fetch(apiUrl(`/api/stocks/history?code=${encodeURIComponent(normalizedCode)}&range=${selectedRange}`), { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得歷史資料");
       const nextHistory = Array.isArray(json.data) ? json.data : [];
@@ -872,7 +882,7 @@ export default function HomePage() {
       const entries = await Promise.all(
         targets.map(async (code) => {
           try {
-            const res = await fetch("/api/stocks/history?code=" + encodeURIComponent(code) + "&range=" + selectedRange, { cache: "no-store" });
+            const res = await fetch(apiUrl("/api/stocks/history?code=" + encodeURIComponent(code) + "&range=" + selectedRange), { cache: "no-store" });
             const json = await res.json();
             return [code, Array.isArray(json.data) ? json.data : []] as const;
           } catch {
@@ -906,7 +916,7 @@ export default function HomePage() {
     try {
       const params = new URLSearchParams({ code: normalizedCode, days: "5" });
       if (company) params.set("company", company);
-      const res = await fetch(`/api/news?${params.toString()}`, { cache: "no-store" });
+      const res = await fetch(apiUrl(`/api/news?${params.toString()}`), { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得新聞");
       const nextNews = (Array.isArray(json.data) ? json.data : [])
@@ -955,7 +965,7 @@ export default function HomePage() {
     setSearchingStocks(true);
     searchTimerRef.current = window.setTimeout(async () => {
       try {
-        const res = await fetch(`/api/stocks/search?q=${encodeURIComponent(trimmed)}&limit=12`, { cache: "force-cache" });
+        const res = await fetch(apiUrl(`/api/stocks/search?q=${encodeURIComponent(trimmed)}&limit=12`), { cache: "force-cache" });
         const json = await res.json();
         if (currentSeq !== searchSeqRef.current) return;
         const remoteResults = Array.isArray(json.data) ? json.data : [];
@@ -976,7 +986,7 @@ export default function HomePage() {
     setLoading((prev) => ({ ...prev, analysis: true }));
     setAnalysis(null);
     try {
-      const res = await fetch("/api/ai/analyze", {
+      const res = await fetch(apiUrl("/api/ai/analyze"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ stock: selectedQuote, news: selectedNews })
@@ -1025,7 +1035,7 @@ export default function HomePage() {
     setWatchlistDigestLoading(true);
     try {
       const activeQuotes = quotesRef.current;
-      const res = await fetch("/api/ai/watchlist", {
+      const res = await fetch(apiUrl("/api/ai/watchlist"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -107,6 +107,7 @@ Netlify Environment Variables：
 
 ```txt
 PYTHON_API_URL=https://你的-render-python-backend網址
+NEXT_PUBLIC_PYTHON_API_URL=https://你的-render-python-backend網址
 GROQ_API_KEY=你的 Groq API Key
 GROQ_MODEL=llama-3.3-70b-versatile
 ```
@@ -116,3 +117,14 @@ GROQ_MODEL=llama-3.3-70b-versatile
 ## 六、報告可以這樣寫
 
 本專案是一個以 Python 為核心的台股資訊系統。系統使用 Python FastAPI 作為後端，負責股票資料取得、新聞資料整理、可信來源篩選、自選股 12 小時摘要快取與 Groq AI 摘要產生。前端網頁使用 Next.js / React 呈現互動介面、圖表與新聞卡片。因此，本系統的主要資料處理與分析邏輯以 Python 撰寫，前端僅作為視覺化展示層。
+
+
+## V29 補充：如果 Netlify `/api` 空白
+
+請另外設定：
+
+```txt
+NEXT_PUBLIC_PYTHON_API_URL=https://你的-render網址.onrender.com
+```
+
+這樣前端會直接呼叫 Python 後端，不再依賴 Netlify 的 `/api` route 轉送。

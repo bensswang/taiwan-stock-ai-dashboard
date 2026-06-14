@@ -59,6 +59,16 @@ PYTHON_API_URL=https://你的-python-backend網址
 
 詳見：`PYTHON_BACKEND_部署說明.md`。
 
+### V29：Netlify 直接連 Python
+
+如果 Netlify 的 `/api/...` route 顯示空白或 `Failed to fetch`，請在 Netlify 另外設定：
+
+```txt
+NEXT_PUBLIC_PYTHON_API_URL=https://你的-render網址.onrender.com
+```
+
+設定後重新部署，前端會直接呼叫 Python FastAPI。
+
 ---
 
 ## 1. 安裝與啟動
