@@ -843,8 +843,25 @@ export default function HomePage() {
       const res = await fetch(apiUrl("/api/stocks/quote"), { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "無法取得股票行情");
-      const nextQuotes = Array.isArray(json.data) ? json.data : [];
+      let nextQuotes: Quote[] = Array.isArray(json.data) ? json.data : [];
       if (nextQuotes.length) {
+        // 全市場行情通常是盤後日資料；自選股與目前選取個股另外抓一批 MIS 近即時報價覆蓋，
+        // 避免左側自選股價格和右側個股即時報價不同步。
+        const realtimeCodes = Array.from(new Set([...watchlistRef.current, selectedCodeRef.current].filter(Boolean)));
+        if (realtimeCodes.length) {
+          try {
+            const realtimeRes = await fetch(apiUrl(`/api/stocks/quote?codes=${encodeURIComponent(realtimeCodes.join(","))}`), { cache: "no-store" });
+            const realtimeJson = await realtimeRes.json();
+            const realtimeQuotes: Quote[] = Array.isArray(realtimeJson.data) ? realtimeJson.data : [];
+            if (realtimeQuotes.length) {
+              const byCode = new Map(nextQuotes.map((quote) => [quote.code, quote]));
+              for (const quote of realtimeQuotes) byCode.set(quote.code, { ...(byCode.get(quote.code) || quote), ...quote });
+              nextQuotes = Array.from(byCode.values());
+            }
+          } catch (error) {
+            console.warn("watchlist realtime overlay failed", error);
+          }
+        }
         setQuotes(nextQuotes);
         setLastQuoteCheck(stamp());
       }
@@ -1135,6 +1152,7 @@ export default function HomePage() {
     setWatchlist((prev) => {
       const next = prev.includes(code) ? prev.filter((item) => item !== code) : [...prev, code];
       window.localStorage.setItem("tw-stock-watchlist", JSON.stringify(next));
+      window.setTimeout(() => loadQuotes({ silent: true }), 0);
       return next;
     });
   }
