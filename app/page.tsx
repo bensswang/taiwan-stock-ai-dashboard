@@ -189,6 +189,43 @@ function formatShortDate(value?: string | null) {
   return d.toLocaleDateString("zh-TW", { month: "2-digit", day: "2-digit" });
 }
 
+function taiwanDateKey(value?: string | Date | null) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+function mergeRealtimeQuoteIntoHistory(points: PricePoint[], quote: Quote | null): PricePoint[] {
+  if (!quote?.price || quote.price <= 0) return points;
+  // 只有近即時 MIS 報價才補到圖表最後一點，避免把盤後日資料硬塞成今天。
+  if (!quote.source?.includes("MIS")) return points;
+  const today = taiwanDateKey(quote.updatedAt || new Date());
+  const next = [...points];
+  const realtimePoint: PricePoint = {
+    date: today,
+    open: quote.open ?? quote.previousClose ?? quote.price,
+    high: quote.high ?? quote.price,
+    low: quote.low ?? quote.price,
+    close: quote.price,
+    volume: quote.volume ?? null
+  };
+  const last = next[next.length - 1];
+  if (!last) return [realtimePoint];
+  if (last.date === today) {
+    next[next.length - 1] = {
+      ...last,
+      open: last.open ?? realtimePoint.open,
+      high: Math.max(last.high ?? quote.price, quote.high ?? quote.price, quote.price),
+      low: Math.min(last.low ?? quote.price, quote.low ?? quote.price, quote.price),
+      close: quote.price,
+      volume: quote.volume ?? last.volume ?? null
+    };
+    return next;
+  }
+  if (last.date < today) return [...next, realtimePoint];
+  return next;
+}
+
 function formatPctValue(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) return "--";
   const sign = value > 0 ? "+" : "";
@@ -1318,6 +1355,7 @@ export default function HomePage() {
 
   const selectedCompanyName = selectedQuote?.name || selectedCode;
   const selectedNews = useMemo(() => news.filter((item) => item.code === selectedCode), [news, selectedCode]);
+  const selectedChartHistory = useMemo(() => mergeRealtimeQuoteIntoHistory(history, selectedQuote), [history, selectedQuote]);
 
   const popularRows = useMemo(() => {
     return quotes
@@ -1566,9 +1604,9 @@ export default function HomePage() {
                   )}
                   <div className="h-72">
                     {chartMode === "single" ? (
-                      loading.history && !history.length ? <EmptyState title="趨勢圖載入中" /> : history.length ? (
+                      loading.history && !selectedChartHistory.length ? <EmptyState title="趨勢圖載入中" /> : selectedChartHistory.length ? (
                         <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={history.map((p) => ({ ...p, close: p.close ?? 0 }))} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                          <LineChart data={selectedChartHistory.map((p) => ({ ...p, close: p.close ?? 0 }))} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                             <CartesianGrid stroke={isDark ? "rgba(148,163,184,.15)" : "rgba(15,23,42,.1)"} vertical={false} />
                             <XAxis dataKey="date" tick={{ fontSize: 11, fill: isDark ? "#94a3b8" : "#64748b" }} minTickGap={32} />
                             <YAxis tick={{ fontSize: 11, fill: isDark ? "#94a3b8" : "#64748b" }} domain={["auto", "auto"]} />

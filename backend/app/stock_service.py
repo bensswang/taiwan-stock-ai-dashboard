@@ -237,6 +237,124 @@ async def get_quote(code: str) -> Quote | None:
     return make_fallback_quote(stock) if stock else None
 
 
+TWSE_MIS_STOCK_INFO = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+
+
+def as_text(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def parse_mis_number(value: Any) -> float | None:
+    text = as_text(value)
+    if not text or text in {"-", "--", "---"} or text.lower() == "null":
+        return None
+    return parse_number(text)
+
+
+def mis_datetime(row: dict[str, Any]) -> str:
+    d = as_text(row.get("d"))
+    t = as_text(row.get("t"))
+    if len(d) == 8 and ":" in t:
+        try:
+            hhmmss = t if len(t) == 8 else f"0{t}"
+            dt = datetime.fromisoformat(f"{d[:4]}-{d[4:6]}-{d[6:8]}T{hhmmss}+08:00")
+            return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        except Exception:
+            pass
+    return now_iso()
+
+
+def channel_for(code: str, stock: StockMaster | None = None) -> str:
+    normalized = normalize_code(code)
+    prefix = "otc" if stock and stock.market == "上櫃" else "tse"
+    return f"{prefix}_{normalized}.tw"
+
+
+def map_mis_row(row: dict[str, Any], stock: StockMaster | None, code_hint: str) -> Quote | None:
+    code = normalize_code(as_text(row.get("c")) or code_hint)
+    if not code:
+        return None
+    price = parse_mis_number(row.get("z"))
+    previous_close = parse_mis_number(row.get("y"))
+    open_price = parse_mis_number(row.get("o"))
+    high = parse_mis_number(row.get("h"))
+    low = parse_mis_number(row.get("l"))
+    volume = parse_mis_number(row.get("v"))
+    # TWSE MIS 在非交易時間可能回傳 '-'，這時不把它當成即時報價。
+    if price is None:
+        return None
+    change = price - previous_close if previous_close is not None else None
+    change_pct = change / previous_close * 100 if change is not None and previous_close else None
+    name = as_text(row.get("n")) or stock.shortName if stock else code
+    market = stock.market if stock else ("上櫃" if as_text(row.get("ex")) == "otc" else "上市")
+    return Quote(
+        code=code,
+        name=name or code,
+        market=market,
+        industry=stock.industry if stock else None,
+        price=price,
+        previousClose=previous_close,
+        open=open_price,
+        high=high,
+        low=low,
+        change=change,
+        changePct=change_pct,
+        volume=volume,
+        turnover=price * volume * 1000 if price and volume else None,
+        marketCap=stock.issuedShares * price if stock and stock.issuedShares and price else None,
+        updatedAt=mis_datetime(row),
+        source="Python TWSE MIS 近即時行情 getStockInfo.jsp",
+        note="TWSE MIS 為基本市況報導資料，盤中較接近即時；實際延遲仍以資料來源為準。",
+    )
+
+
+async def get_realtime_quotes(codes: list[str]) -> list[Quote]:
+    wanted = list(dict.fromkeys([normalize_code(code) for code in codes if normalize_code(code)]))[:80]
+    if not wanted:
+        return []
+    stocks = await get_stock_master()
+    by_code = {stock.code: stock for stock in stocks}
+    channels = [channel_for(code, by_code.get(code)) for code in wanted]
+    url = f"{TWSE_MIS_STOCK_INFO}?ex_ch={'|'.join(channels)}&json=1&delay=0&_={int(time.time() * 1000)}"
+    try:
+        async with httpx.AsyncClient(timeout=12, follow_redirects=True, headers={
+            "Accept": "application/json,text/plain,*/*",
+            "Referer": "https://mis.twse.com.tw/stock/fibest.jsp?stock=2330",
+            "User-Agent": "taiwan-stock-ai-python-backend/1.0",
+        }) as client:
+            res = await client.get(url)
+            res.raise_for_status()
+            data = res.json()
+        rows = data.get("msgArray") or []
+        row_by_code = {normalize_code(as_text(row.get("c"))): row for row in rows if isinstance(row, dict)}
+        mapped: list[Quote] = []
+        for code in wanted:
+            quote_item = map_mis_row(row_by_code.get(code, {}), by_code.get(code), code)
+            if quote_item:
+                mapped.append(quote_item)
+        return mapped
+    except Exception:
+        return []
+
+
+async def get_realtime_quote(code: str) -> Quote | None:
+    quotes = await get_realtime_quotes([code])
+    return quotes[0] if quotes else None
+
+
+async def get_quotes_with_realtime_fallback(codes: list[str]) -> list[Quote]:
+    wanted = list(dict.fromkeys([normalize_code(code) for code in codes if normalize_code(code)]))
+    realtime = await get_realtime_quotes(wanted)
+    by_code = {quote_item.code: quote_item for quote_item in realtime}
+    if len(by_code) < len(wanted):
+        daily = await get_daily_quotes()
+        daily_by_code = {quote_item.code: quote_item for quote_item in daily}
+        for code in wanted:
+            if code not in by_code and code in daily_by_code:
+                by_code[code] = daily_by_code[code]
+    return [by_code[code] for code in wanted if code in by_code]
+
+
 def ymd(date_value: datetime) -> str:
     return date_value.strftime("%Y%m%d")
 
