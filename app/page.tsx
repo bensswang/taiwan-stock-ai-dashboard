@@ -81,7 +81,7 @@ const SELECTED_REFRESH_MS = 30_000;
 const CHART_REFRESH_MS = 5 * 60 * 1000;
 const NEWS_REFRESH_MS = 60 * 60 * 1000;
 const WATCHLIST_DIGEST_REFRESH_MS = 12 * 60 * 60 * 1000;
-const WATCHLIST_DIGEST_STORAGE_KEY = "tw-stock-watchlist-digest-cache-v1";
+const WATCHLIST_DIGEST_STORAGE_KEY = "tw-stock-watchlist-digest-cache-v3";
 
 const PYTHON_API_PUBLIC_URL = (process.env.NEXT_PUBLIC_PYTHON_API_URL || "").replace(/\/$/, "");
 

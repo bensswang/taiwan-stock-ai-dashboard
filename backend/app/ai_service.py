@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -98,6 +99,59 @@ def taiwan_date() -> str:
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
 
 
+def extract_json_object(text: str) -> dict[str, Any] | None:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    # 移除模型可能加上的 Markdown code fence。
+    raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I).strip()
+    raw = re.sub(r"\s*```$", "", raw).strip()
+    candidates = [raw]
+    if "{" in raw and "}" in raw:
+        candidates.append(raw[raw.find("{"): raw.rfind("}") + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            continue
+    return None
+
+
+def normalize_watchlist_digest(raw: str, source_count: int, chart_count: int, now: float) -> dict[str, Any]:
+    parsed = extract_json_object(raw)
+    if parsed:
+        headline = clean_visible_text(str(parsed.get("headline") or "自選股當日重點已整理完成。"))
+        paragraphs_raw = parsed.get("paragraphs")
+        if isinstance(paragraphs_raw, list):
+            paragraphs = [clean_visible_text(str(item)) for item in paragraphs_raw if clean_visible_text(str(item))]
+        else:
+            paragraphs = [clean_visible_text(str(paragraphs_raw))] if paragraphs_raw else []
+        outlook = clean_visible_text(str(parsed.get("outlook") or "後續觀察量價是否延續，以及是否有公司公告或法人籌碼變化。"))
+    else:
+        # 如果模型沒有乖乖輸出 JSON，就退回純文字分段，但不把 JSON 原文直接當標題。
+        lines = [clean_visible_text(line) for line in raw.splitlines() if clean_visible_text(line)]
+        # 避免把看起來像 JSON 的整段字串顯示出去。
+        lines = [line for line in lines if not (line.startswith("{") or line.startswith('"headline"') or "\"paragraphs\"" in line)]
+        headline = lines[0][:80] if lines else "自選股當日重點已整理完成。"
+        paragraphs = lines[1:4] if len(lines) > 1 else ["今日自選股主要觀察量價變化、新聞事件與族群輪動，請搭配個股新聞與圖表確認。"]
+        outlook = lines[-1] if lines else "後續觀察量價是否延續，以及是否有公司公告或法人籌碼變化。"
+
+    if not paragraphs:
+        paragraphs = ["今日自選股主要觀察量價變化、新聞事件與族群輪動，請搭配個股新聞與圖表確認。"]
+    return {
+        "headline": headline,
+        "paragraphs": paragraphs[:4],
+        "outlook": outlook,
+        "sourceCount": source_count,
+        "chartCount": chart_count,
+        "targetDate": taiwan_date(),
+        "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "nextUpdateAt": datetime.fromtimestamp(now + CACHE_TTL_SECONDS, timezone.utc).isoformat().replace("+00:00", "Z"),
+        "provider": "groq",
+    }
+
+
 async def build_watchlist_digest(watchlist: list[str], quotes: list[dict[str, Any]], force: bool = False) -> dict[str, Any]:
     codes = [str(code).strip().upper() for code in watchlist if str(code).strip()][:12]
     key = ",".join(codes)
@@ -138,11 +192,7 @@ async def build_watchlist_digest(watchlist: list[str], quotes: list[dict[str, An
 請用 JSON 格式回覆，欄位必須包含：headline, paragraphs, outlook。
 headline 一句話，paragraphs 為三個段落陣列，outlook 是後續留意。
 """.strip()
-    raw = await call_groq([{"role": "system", "content": "你是台股自選股新聞整理助手，只輸出繁體中文。"}, {"role": "user", "content": prompt}], max_tokens=1000)
-    # 為了避免模型沒有輸出合法 JSON，這裡用穩定格式包裝。
-    paragraphs = [line.strip() for line in raw.splitlines() if line.strip()][:3]
-    if not paragraphs:
-        paragraphs = ["今日自選股新聞資料不足，建議先觀察成交量、漲跌幅與公司公告。"]
-    data = {"headline": paragraphs[0][:80], "paragraphs": paragraphs[:3], "outlook": paragraphs[-1], "sourceCount": len(all_news), "chartCount": len(chart_signals), "targetDate": taiwan_date(), "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "nextUpdateAt": datetime.fromtimestamp(now + CACHE_TTL_SECONDS, timezone.utc).isoformat().replace("+00:00", "Z"), "provider": "groq"}
+    raw = await call_groq([{"role": "system", "content": "你是台股自選股新聞整理助手。請只輸出合法 JSON，不要加 Markdown code fence，也不要在 JSON 外加說明文字。"}, {"role": "user", "content": prompt}], max_tokens=1000)
+    data = normalize_watchlist_digest(raw, len(all_news), len(chart_signals), now)
     WATCHLIST_CACHE[key] = (now + CACHE_TTL_SECONDS, data)
     return data
